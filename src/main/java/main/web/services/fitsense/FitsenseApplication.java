@@ -8,10 +8,7 @@ import org.springframework.scheduling.annotation.EnableScheduling;
 @SpringBootApplication
 @EnableJpaAuditing
 @EnableScheduling
-public class FitsenseApplication {
-
-	public static void main(String[] args) {
+public class FitsenseApplication { public static void main(String[] args) {
 		SpringApplication.run(FitsenseApplication.class, args);
 	}
-
 }
