@@ -24,6 +24,7 @@
 		<java.version>21</java.version>
 		<springdoc.version>3.1.0</springdoc.version>
 		<jjwt.version>0.12.6</jjwt.version>
+		<jackson2.version>2.18.2</jackson2.version>
 	</properties>
 
 	<dependencies>
@@ -91,6 +92,18 @@
 			<artifactId>jjwt-jackson</artifactId>
 			<version>${jjwt.version}</version>
 			<scope>runtime</scope>
+		</dependency>
+
+		<!-- ============ JSON de las columnas JSONB ============ -->
+		<!-- Explicito y con version fija a proposito. El backend usa Jackson para
+		     params, input_snapshot, output_snapshot y risk_factors, y esas columnas
+		     NO deben depender de que version de Jackson traiga el BOM de Boot: un
+		     cambio de linea (2.x -> 3.x, com.fasterxml -> tools.jackson) romperia
+		     la lectura de datos ya guardados. -->
+		<dependency>
+			<groupId>com.fasterxml.jackson.core</groupId>
+			<artifactId>jackson-databind</artifactId>
+			<version>${jackson2.version}</version>
 		</dependency>
 
 		<!-- ============ Utilidades ============ -->

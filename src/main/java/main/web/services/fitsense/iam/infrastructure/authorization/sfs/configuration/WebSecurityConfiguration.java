@@ -42,11 +42,6 @@ public class WebSecurityConfiguration {
     }
 
     @Bean
-    public BearerAuthorizationRequestFilter authorizationRequestFilter() {
-        return new BearerAuthorizationRequestFilter(tokenService, userRepository);
-    }
-
-    @Bean
     public PasswordEncoder passwordEncoder() {
         return hashingService;
     }
@@ -64,6 +59,9 @@ public class WebSecurityConfiguration {
                         .requestMatchers(PUBLIC_PATHS).permitAll()
                         .anyRequest().authenticated());
 
+        // Se instancia aqui y NO se declara como @Bean: un filtro que ademas es
+        // bean lo registra tambien el contenedor de servlets, con lo que cada
+        // peticion pasaria dos veces por la validacion del token.
         http.addFilterBefore(
                 new BearerAuthorizationRequestFilter(tokenService, userRepository),
                 UsernamePasswordAuthenticationFilter.class);
