@@ -3,7 +3,7 @@ package main.web.services.fitsense.shared.domain.model.aggregates;
 import jakarta.persistence.Column;
 import jakarta.persistence.MappedSuperclass;
 import lombok.Getter;
-import org.springframework.data.annotation.LastModifiedDate;
+import org.hibernate.annotations.UpdateTimestamp;
 import org.springframework.data.domain.AbstractAggregateRoot;
 
 import java.time.OffsetDateTime;
@@ -16,7 +16,8 @@ import java.time.OffsetDateTime;
 public abstract class AuditableAbstractAggregateRoot<T extends AbstractAggregateRoot<T>>
         extends CreatedAuditableAbstractAggregateRoot<T> {
 
-    @LastModifiedDate
+    /** Mismo motivo que created_at: @LastModifiedDate no admite OffsetDateTime. */
+    @UpdateTimestamp
     @Column(name = "updated_at", nullable = false)
     private OffsetDateTime updatedAt;
 }

@@ -24,7 +24,6 @@
 		<java.version>21</java.version>
 		<springdoc.version>3.1.0</springdoc.version>
 		<jjwt.version>0.12.6</jjwt.version>
-		<jackson2.version>2.18.2</jackson2.version>
 	</properties>
 
 	<dependencies>
@@ -103,7 +102,6 @@
 		<dependency>
 			<groupId>com.fasterxml.jackson.core</groupId>
 			<artifactId>jackson-databind</artifactId>
-			<version>${jackson2.version}</version>
 		</dependency>
 
 		<!-- ============ Utilidades ============ -->

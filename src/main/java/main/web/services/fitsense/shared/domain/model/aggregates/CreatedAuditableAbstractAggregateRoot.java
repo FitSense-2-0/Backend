@@ -1,12 +1,10 @@
 package main.web.services.fitsense.shared.domain.model.aggregates;
 
 import jakarta.persistence.Column;
-import jakarta.persistence.EntityListeners;
 import jakarta.persistence.MappedSuperclass;
 import lombok.Getter;
-import org.springframework.data.annotation.CreatedDate;
+import org.hibernate.annotations.CreationTimestamp;
 import org.springframework.data.domain.AbstractAggregateRoot;
-import org.springframework.data.jpa.domain.support.AuditingEntityListener;
 
 import java.time.OffsetDateTime;
 
@@ -20,11 +18,16 @@ import java.time.OffsetDateTime;
  */
 @Getter
 @MappedSuperclass
-@EntityListeners(AuditingEntityListener.class)
 public abstract class CreatedAuditableAbstractAggregateRoot<T extends AbstractAggregateRoot<T>>
         extends AbstractAggregateRoot<T> {
 
-    @CreatedDate
+    /**
+     * Timestamp de Hibernate y no @CreatedDate de Spring Data: la auditoria de
+     * Spring Data no admite OffsetDateTime como tipo destino (solo LocalDateTime,
+     * Instant, Date y similares), y OffsetDateTime es el tipo correcto contra un
+     * TIMESTAMPTZ. Con @CreatedDate cualquier INSERT falla en tiempo de ejecucion.
+     */
+    @CreationTimestamp
     @Column(name = "created_at", nullable = false, updatable = false)
     private OffsetDateTime createdAt;
 }
