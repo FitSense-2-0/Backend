@@ -37,7 +37,8 @@ public class RuleBasedTrainingPlanGenerator implements TrainingPlanGenerator {
 
     private final int durationToRepsDivisor;
 
-    public RuleBasedTrainingPlanGenerator(@Value("${fitsense.volume.duration-to-reps-divisor:30}") int durationToRepsDivisor) {
+    public RuleBasedTrainingPlanGenerator(
+            @Value("${fitsense.volume.duration-to-reps-divisor:30}") int durationToRepsDivisor) {
         this.durationToRepsDivisor = durationToRepsDivisor;
     }
 

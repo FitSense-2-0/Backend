@@ -82,7 +82,7 @@ public class PlannedWorkout {
         // JPA
     }
 
-    PlannedWorkout(WeeklyTrainingPlan plan, LocalDate scheduledDate, WorkoutFocus focusCode,
+    public PlannedWorkout(WeeklyTrainingPlan plan, LocalDate scheduledDate, WorkoutFocus focusCode,
                    String workoutName, int expectedDurationMinutes, short displayOrder,
                    OffsetDateTime expiresAt) {
         this.plan = plan;
@@ -135,7 +135,7 @@ public class PlannedWorkout {
         markOutcome(WorkoutStatus.SKIPPED, reason);
     }
 
-    void markReplaced() {
+    public void markReplaced() {
         if (!status.isFinished()) this.status = WorkoutStatus.REPLACED;
     }
 
