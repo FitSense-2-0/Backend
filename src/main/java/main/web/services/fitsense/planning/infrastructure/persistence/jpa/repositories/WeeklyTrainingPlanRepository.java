@@ -38,6 +38,17 @@ public interface WeeklyTrainingPlanRepository extends JpaRepository<WeeklyTraini
     List<WeeklyTrainingPlan> findByUserIdAndWeekStartDateOrderByPlanVersionAsc(
             Long userId, LocalDate weekStartDate);
 
+    /**
+     * Semana 1 del participante: referencia del tope acumulado de 18.4.
+     * <p>
+     * Se toma la version 1 y no la ultima a proposito: el limite del 40 % es
+     * contra el volumen ORIGINAL, no contra el ya ajustado. Si fuera contra el
+     * ajustado, tres reducciones del 20 % seguidas dejarian al participante en
+     * el 51 % sin que ninguna pasara el tope por si sola.
+     */
+    Optional<WeeklyTrainingPlan> findFirstByUserIdAndWeekNumberOrderByPlanVersionAsc(
+            Long userId, Short weekNumber);
+
     List<WeeklyTrainingPlan> findByUserIdOrderByWeekStartDateDescPlanVersionDesc(Long userId);
 
     /** Ultima semana generada, sin importar el estado: define el week_number siguiente. */
