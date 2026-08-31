@@ -14,25 +14,21 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 
 import java.time.Duration;
+import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-/**
- * Adaptador de Replicate. Llama a openai/gpt-5-structured pasando el modelo
- * concreto en el input, lo que permite forzar la forma de la salida con
- * json_schema.
- * <p>
- * La cabecera Prefer: wait hace la llamada sincrona: la prediccion vuelve ya
- * resuelta y no hace falta hacer polling ni guardar estado intermedio.
- * <p>
- * El token nunca aparece en el codigo ni en los logs: llega por variable de
- * entorno, como el resto de credenciales del proyecto.
- */
 @Component
 public class ReplicateTrainingPlanGenerator implements TrainingPlanGenerator {
 
     private static final Logger log = LoggerFactory.getLogger(ReplicateTrainingPlanGenerator.class);
+
+    /** Espera inicial de la peticion. Replicate no admite mas de 60. */
+    private static final int PREFER_WAIT_SECONDS = 60;
+
+    /** Cada cuanto se vuelve a preguntar por una prediccion en curso. */
+    private static final Duration POLL_INTERVAL = Duration.ofSeconds(3);
 
     private final ReplicateProperties properties;
     private final PlanPromptBuilder promptBuilder;
@@ -43,28 +39,21 @@ public class ReplicateTrainingPlanGenerator implements TrainingPlanGenerator {
     public ReplicateTrainingPlanGenerator(ReplicateProperties properties,
                                           PlanPromptBuilder promptBuilder,
                                           PlanDraftFromJsonAssembler assembler,
-                                          JsonSupport jsonSupport,
-                                          RestClient.Builder restClientBuilder) {
+                                          JsonSupport jsonSupport) {
         this.properties = properties;
         this.promptBuilder = promptBuilder;
         this.assembler = assembler;
         this.jsonSupport = jsonSupport;
-        this.restClient = restClientBuilder.build();
+        this.restClient = RestClient.create();
     }
 
     @Override
-    public GenerationSource source() {
-        return GenerationSource.AI;
-    }
+    public GenerationSource source() { return GenerationSource.AI; }
 
     @Override
-    public String modelName() {
-        return properties.model();
-    }
+    public String modelName() { return properties.model(); }
 
-    public boolean isEnabled() {
-        return properties.isUsable();
-    }
+    public boolean isEnabled() { return properties.isUsable(); }
 
     @Override
     public PlanDraft generate(PlanGenerationContext context, List<String> previousProblems) {
@@ -83,28 +72,23 @@ public class ReplicateTrainingPlanGenerator implements TrainingPlanGenerator {
         input.put("reasoning_effort", properties.reasoningEffort());
         input.put("json_schema", PlanJsonSchema.format());
 
-        ReplicateResponse response;
-        try {
-            response = restClient.post()
-                    .uri(properties.baseUrl())
-                    .header(HttpHeaders.AUTHORIZATION, "Bearer " + properties.apiToken())
-                    // Prefer: wait bloquea hasta que la prediccion termina.
-                    .header("Prefer", "wait=" + Math.min(properties.timeoutSeconds(), 60))
-                    .contentType(MediaType.APPLICATION_JSON)
-                    .body(Map.of("input", input))
-                    .retrieve()
-                    .body(ReplicateResponse.class);
-        } catch (RuntimeException e) {
-            // Un fallo de red o un 4xx no es un plan invalido: es el proveedor
-            // caido. Se trata igual a efectos de reintento, pero se registra
-            // distinto para poder separarlos en el analisis.
-            log.warn("Replicate no respondio correctamente: {}", e.getMessage());
-            throw new InvalidPlanDraftException(List.of(
-                    "El proveedor de IA no respondio: " + e.getMessage()));
+        String rawBody = post(input);
+        log.info("Replicate respondio (crudo): {}", rawBody);
+
+        var response = jsonSupport.read(rawBody, ReplicateResponse.class);
+
+        // Prefer: wait tiene un techo duro de 60 s del lado de Replicate. Con el
+        // catalogo completo el modelo tarda mas, y la respuesta llegaba con
+        // estado "starting": no era un fallo, era una prediccion aun en curso
+        // que se contabilizaba como intento perdido.
+        if (response != null && response.pending()) {
+            response = awaitCompletion(response);
         }
 
         if (response == null || !response.succeeded()) {
-            String detail = response == null ? "respuesta vacia" : response.status() + " " + response.error();
+            String detail = response == null
+                    ? "respuesta vacia"
+                    : response.status() + " " + response.error();
             log.warn("Replicate devolvio un estado no exitoso: {}", detail);
             throw new InvalidPlanDraftException(List.of("El proveedor de IA fallo: " + detail));
         }
@@ -112,7 +96,65 @@ public class ReplicateTrainingPlanGenerator implements TrainingPlanGenerator {
         return response.joinedOutput();
     }
 
-    Duration timeout() {
-        return Duration.ofSeconds(properties.timeoutSeconds());
+    /**
+     * Consulta la prediccion hasta que termina. El limite lo marca
+     * fitsense.ai.timeout-seconds, que ya NO esta atado a los 60 s de la
+     * cabecera Prefer.
+     */
+    private ReplicateResponse awaitCompletion(ReplicateResponse pending) {
+        var pollUrl = pending.pollUrl();
+        if (pollUrl == null) {
+            log.warn("La prediccion sigue en curso y no trae urls.get: no se puede consultar");
+            return pending;
+        }
+
+        var limite = Instant.now().plusSeconds(properties.timeoutSeconds());
+        var actual = pending;
+
+        while (actual != null && actual.pending() && Instant.now().isBefore(limite)) {
+            try {
+                Thread.sleep(POLL_INTERVAL.toMillis());
+            } catch (InterruptedException e) {
+                // Restaurar la marca: alguien esta parando la aplicacion y no
+                // queremos dejar el hilo en un estado inconsistente.
+                Thread.currentThread().interrupt();
+                return actual;
+            }
+
+            try {
+                var raw = restClient.get()
+                        .uri(pollUrl)
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + properties.apiToken())
+                        .retrieve()
+                        .body(String.class);
+                actual = jsonSupport.read(raw, ReplicateResponse.class);
+            } catch (RuntimeException e) {
+                log.warn("Fallo al consultar la prediccion {}: {}", pending.id(), e.getMessage());
+                return actual;
+            }
+        }
+
+        if (actual != null && actual.pending())
+            log.warn("La prediccion {} seguia en curso tras {} s", pending.id(),
+                    properties.timeoutSeconds());
+
+        return actual;
+    }
+
+    private String post(Map<String, Object> input) {
+        try {
+            return restClient.post()
+                    .uri(properties.baseUrl())
+                    .header(HttpHeaders.AUTHORIZATION, "Bearer " + properties.apiToken())
+                    .header("Prefer", "wait=" + PREFER_WAIT_SECONDS)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(Map.of("input", input))
+                    .retrieve()
+                    .body(String.class);
+        } catch (RuntimeException e) {
+            log.warn("Replicate no respondio correctamente: {}", e.getMessage());
+            throw new InvalidPlanDraftException(List.of(
+                    "El proveedor de IA no respondio: " + e.getMessage()));
+        }
     }
 }

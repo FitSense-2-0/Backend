@@ -13,7 +13,7 @@ import java.util.Optional;
  * Capa anticorrupcion hacia planning. Execution nunca escribe en las tablas de
  * planificacion: pide lo indicado y comunica el desenlace.
  */
-@Service
+@Service("executionExternalPlanningService")
 public class ExternalPlanningService {
 
     private final PlanningContextFacade planningContextFacade;
@@ -33,7 +33,9 @@ public class ExternalPlanningService {
                         target.exerciseId(),
                         "DURATION".equals(target.prescriptionType()),
                         target.plannedRepsTotal(),
-                        target.plannedDurationSeconds()))
+                        // Total de segundos, no los de una sola serie: es el
+                        // denominador del cumplimiento de 17.1.
+                        target.plannedDurationTotal()))
                 .toList();
     }
 

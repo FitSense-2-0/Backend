@@ -5,7 +5,7 @@ import main.web.services.fitsense.execution.domain.model.valueobjects.Completion
 import org.springframework.stereotype.Service;
 
 /** Capa anticorrupcion hacia configuration: los umbrales de 17.1 y 17.2. */
-@Service
+@Service("executionExternalConfigurationService")
 public class ExternalConfigurationService {
 
     private final ConfigurationContextFacade configurationContextFacade;

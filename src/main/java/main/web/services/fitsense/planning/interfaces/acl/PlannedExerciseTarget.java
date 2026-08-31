@@ -14,4 +14,17 @@ public record PlannedExerciseTarget(
         if (plannedSets == null || plannedReps == null) return 0;
         return plannedSets * plannedReps;
     }
+
+    /**
+     * Segundos totales indicados: series x duracion, igual que plannedRepsTotal
+     * multiplica series por repeticiones.
+     * <p>
+     * Usar solo plannedDurationSeconds tomaria UNA serie como el total, y
+     * cualquier ejercicio de duracion marcaria 100 % con un tercio del trabajo.
+     * Inflaba la adherencia de forma sistematica.
+     */
+    public int plannedDurationTotal() {
+        if (plannedDurationSeconds == null) return 0;
+        return (plannedSets == null ? 1 : plannedSets) * plannedDurationSeconds;
+    }
 }

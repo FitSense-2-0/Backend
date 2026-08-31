@@ -82,6 +82,22 @@ public class Exercise {
     @Column(name = "is_active", nullable = false)
     private boolean active;
 
+    /**
+     * Banderas de seguridad de V10. Se filtran en la consulta del conjunto
+     * elegible y no como instruccion en el prompt: cuando la consecuencia es una
+     * lesion, no se confia en que el modelo obedezca un texto.
+     */
+    @Column(name = "high_impact", nullable = false)
+    private boolean highImpact;
+
+    /** Exige bajar al suelo y levantarse. Es barrera de movilidad, no de fuerza. */
+    @Column(name = "requires_floor", nullable = false)
+    private boolean requiresFloor;
+
+    /** Carga sobre columna o cuello, o posicion invertida. */
+    @Column(name = "axial_load", nullable = false)
+    private boolean axialLoad;
+
     @Column(name = "created_at", nullable = false, insertable = false, updatable = false)
     private OffsetDateTime createdAt;
 

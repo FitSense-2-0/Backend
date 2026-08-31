@@ -19,9 +19,6 @@ public interface ExerciseRepository extends JpaRepository<Exercise, Long> {
      * patron obliga a PostgreSQL a deducir el tipo de un parametro que solo
      * aparece comparado contra NULL, y falla con "could not determine data type
      * of parameter". Dentro de COALESCE el tipo lo aporta la columna.
-     * <p>
-     * search y maxDifficulty nunca llegan nulos: el query service los normaliza
-     * a '%' y al maximo, que es lo mismo que no filtrar.
      */
     @Query("""
            SELECT e FROM Exercise e
@@ -39,10 +36,16 @@ public interface ExerciseRepository extends JpaRepository<Exercise, Long> {
                           Limit limit);
 
     /**
-     * Conjunto elegible. equipmentIds nunca llega vacio (el query service
-     * garantiza al menos 'body weight') y blockedIds tampoco (se rellena con
-     * un centinela): un IN vacio en JPQL es un error de sintaxis en tiempo de
-     * ejecucion, no una lista sin resultados.
+     * Conjunto elegible. Los tres ultimos parametros son las restricciones de
+     * seguridad: cuando llegan en true, se descarta lo marcado.
+     * <p>
+     * La forma "(:excluir = false OR e.campo = false)" permite pasar la
+     * restriccion como bandera en vez de tener cuatro consultas distintas.
+     * <p>
+     * equipmentIds nunca llega vacio (el query service garantiza al menos
+     * 'body weight') y blockedIds tampoco (se rellena con un centinela): un IN
+     * vacio en JPQL es un error de sintaxis en tiempo de ejecucion, no una
+     * lista sin resultados.
      */
     @Query("""
            SELECT e FROM Exercise e
@@ -50,11 +53,17 @@ public interface ExerciseRepository extends JpaRepository<Exercise, Long> {
              AND e.equipmentId IN :equipmentIds
              AND e.difficultyLevel <= :maxDifficulty
              AND e.id NOT IN :blockedIds
+             AND (:excludeHighImpact = false OR e.highImpact = false)
+             AND (:excludeFloorWork  = false OR e.requiresFloor = false)
+             AND (:excludeAxialLoad  = false OR e.axialLoad = false)
            ORDER BY e.bodyPartId ASC, e.difficultyLevel ASC, e.id ASC
            """)
     List<Exercise> findEligible(@Param("equipmentIds") List<Short> equipmentIds,
                                 @Param("maxDifficulty") short maxDifficulty,
-                                @Param("blockedIds") List<Long> blockedIds);
+                                @Param("blockedIds") List<Long> blockedIds,
+                                @Param("excludeHighImpact") boolean excludeHighImpact,
+                                @Param("excludeFloorWork") boolean excludeFloorWork,
+                                @Param("excludeAxialLoad") boolean excludeAxialLoad);
 
     long countByActiveTrue();
 }

@@ -10,7 +10,7 @@ import java.time.ZoneId;
  * pregunta si puede generarle un plan y en que zona horaria vive, que es lo que
  * define el vencimiento de cada entrenamiento.
  */
-@Service
+@Service("planningExternalIamService")
 public class ExternalIamService {
 
     /** Zona del estudio. Un fallback al reloj del servidor corromperia la adherencia en silencio. */

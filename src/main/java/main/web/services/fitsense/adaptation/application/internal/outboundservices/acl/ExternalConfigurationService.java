@@ -5,7 +5,7 @@ import main.web.services.fitsense.configuration.interfaces.acl.ConfigurationCont
 import org.springframework.stereotype.Service;
 
 /** Capa anticorrupcion hacia configuration: los umbrales de la tabla de decision. */
-@Service
+@Service("adaptationExternalConfigurationService")
 public class ExternalConfigurationService {
 
     private final ConfigurationContextFacade configurationContextFacade;

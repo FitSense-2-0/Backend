@@ -10,7 +10,7 @@ import java.time.LocalDate;
  * el ajuste. El de la semana anterior fija el punto de partida; el de la semana
  * 1 fija el suelo del tope acumulado de 18.4.
  */
-@Service
+@Service("adaptationExternalPlanningService")
 public class ExternalPlanningService {
 
     private final PlanningContextFacade planningContextFacade;

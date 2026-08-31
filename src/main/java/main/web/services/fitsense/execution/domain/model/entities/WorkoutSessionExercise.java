@@ -100,7 +100,7 @@ public class WorkoutSessionExercise {
         this.status = classify(thresholds);
 
         // La causa solo tiene sentido si efectivamente no se hizo.
-        if (this.status != ExerciseOutcome.SKIPPED) this.skipReason = null;
+        if (this.status == ExerciseOutcome.COMPLETED) this.skipReason = null;
     }
 
     private BigDecimal computePercentage(ExerciseTarget target, CompletionThresholds thresholds) {

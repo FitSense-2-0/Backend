@@ -37,6 +37,11 @@ public class WorkoutSessionCommandServiceImpl implements WorkoutSessionCommandSe
         this.externalConfigurationService = externalConfigurationService;
     }
 
+    /**
+     * Sesion en vivo. Aqui SI se exige que el entrenamiento siga abierto y sin
+     * vencer: no tiene sentido "empezar ahora" algo programado para hace tres
+     * dias. Para eso esta el reporte retroactivo.
+     */
     @Override
     @Transactional
     public Optional<WorkoutSession> handle(StartWorkoutSessionCommand command) {
@@ -104,6 +109,19 @@ public class WorkoutSessionCommandServiceImpl implements WorkoutSessionCommandSe
     @Transactional
     public Optional<WorkoutSession> handle(ReportWorkoutCommand command) {
         var workout = requireOwnedWorkout(command.userId(), command.plannedWorkoutId());
+
+        // report SI admite un entrenamiento ya cerrado: es su razon de ser. Un
+        // SKIPPED por vencimiento significa "no se registro", no "no se hizo",
+        // y la tarea de las 00:30 los cierra todos cada noche. Sin esto, el
+        // reporte retroactivo solo funcionaria el mismo dia, que es justo
+        // cuando no hace falta.
+        //
+        // Lo que si se rechaza es reportar sobre un entrenamiento que ya tiene
+        // sesion contando: eso no es un olvido sino una correccion, y para eso
+        // esta el reintento, que crea attempt_number 2 y desplaza al anterior.
+        if ("COMPLETED".equals(workout.status()) || "PARTIAL".equals(workout.status()))
+            throw WorkoutNotAvailableException.closed(
+                    command.plannedWorkoutId(), workout.status());
 
         if (command.exercises() == null || command.exercises().isEmpty())
             throw new DomainRuleViolationException(

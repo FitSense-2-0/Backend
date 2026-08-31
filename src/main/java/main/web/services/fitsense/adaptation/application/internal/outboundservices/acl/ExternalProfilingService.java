@@ -10,7 +10,7 @@ import java.util.Optional;
  * Capa anticorrupcion hacia profiling. La adaptacion necesita la linea base del
  * participante (dias, minutos, nivel) para saber desde donde reduce.
  */
-@Service
+@Service("adaptationExternalProfilingService")
 public class ExternalProfilingService {
 
     private final ProfilingContextFacade profilingContextFacade;

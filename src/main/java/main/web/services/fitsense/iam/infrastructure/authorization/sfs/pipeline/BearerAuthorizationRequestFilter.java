@@ -5,6 +5,7 @@ import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import main.web.services.fitsense.iam.application.internal.outboundservices.tokens.TokenService;
+import main.web.services.fitsense.iam.infrastructure.authorization.sfs.model.UserDetailsImpl;
 import main.web.services.fitsense.iam.infrastructure.persistence.jpa.repositories.UserRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -14,7 +15,6 @@ import org.springframework.security.web.authentication.WebAuthenticationDetailsS
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
-import java.util.List;
 
 /**
  * Filtro que extrae el token Bearer de la peticion, lo valida y pobla el
@@ -53,8 +53,16 @@ public class BearerAuthorizationRequestFilter extends OncePerRequestFilter {
                 var userId = tokenService.extractUserId(token);
 
                 userRepository.findById(userId).ifPresent(user -> {
+                    // El principal debe ser UserDetailsImpl, no el User del
+                    // dominio: es el tipo que los controladores reciben con
+                    // @AuthenticationPrincipal. Con el agregado directo, Spring
+                    // da la peticion por autenticada y la deja pasar, pero
+                    // inyecta null en el controlador, que revienta con NPE en
+                    // vez de devolver un 401 limpio.
+                    var principal = UserDetailsImpl.build(user);
+
                     var authentication = new UsernamePasswordAuthenticationToken(
-                            user, null, List.of());
+                            principal, null, principal.getAuthorities());
                     authentication.setDetails(
                             new WebAuthenticationDetailsSource().buildDetails(request));
                     SecurityContextHolder.getContext().setAuthentication(authentication);

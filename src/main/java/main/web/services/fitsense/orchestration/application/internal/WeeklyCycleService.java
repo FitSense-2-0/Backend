@@ -48,7 +48,16 @@ public class WeeklyCycleService {
         this.adaptationContextFacade = adaptationContextFacade;
     }
 
-    @Transactional
+    /**
+     * Ejecuta el ciclo semanal de un participante.
+     * <p>
+     * noRollbackFor: la generacion del plan puede fallar legitimamente (19.4) y
+     * ese fallo NO debe deshacer el cierre de semana ni las metricas, que ya se
+     * calcularon bien. Sin esto, capturar la excepcion no basta: Spring marca la
+     * transaccion como rollback-only y revienta al hacer commit con
+     * UnexpectedRollbackException, perdiendo tambien lo que si funciono.
+     */
+    @Transactional(noRollbackFor = RuntimeException.class)
     public Optional<Long> runFor(Long userId, LocalDate measuredWeekStart, LocalDate newWeekStart) {
         // 1. Cerrar. El plan deja de admitir sesiones nuevas.
         planningContextFacade.closeWeek(userId, measuredWeekStart);

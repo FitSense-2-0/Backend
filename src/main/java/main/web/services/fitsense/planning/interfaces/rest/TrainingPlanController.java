@@ -121,7 +121,9 @@ public class TrainingPlanController {
                 .map(exercise -> exercise.getExerciseId())
                 .collect(Collectors.toSet());
 
+        // fetchDetails y no fetchNames: la app necesita el gif y la atribucion
+        // para pintar la pantalla del ejercicio sin una llamada por cada uno.
         return WeeklyTrainingPlanResourceFromEntityAssembler.toResourceFromEntity(
-                plan, externalCatalogService.fetchNames(exerciseIds));
+                plan, externalCatalogService.fetchDetails(exerciseIds));
     }
 }

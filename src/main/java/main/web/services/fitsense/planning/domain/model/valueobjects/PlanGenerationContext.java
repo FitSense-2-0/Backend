@@ -18,7 +18,8 @@ public record PlanGenerationContext(
         PlanningProfile profile,
         PlanAdjustment adjustment,
         PreviousWeekSummary previousWeek,
-        List<CandidateExercise> availableExercises
+        List<CandidateExercise> availableExercises,
+        SafetyProfile safety
 ) {
     public static final String SCHEMA_VERSION = "GEN-IN-1.0";
 

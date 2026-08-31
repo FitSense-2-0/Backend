@@ -37,6 +37,6 @@ public record PlanningProfile(
 
     /** Validacion 4: ninguna sesion excede session_minutes + 15 %. */
     public int maxSessionMinutes() {
-        return (int) Math.floor(sessionMinutes * 1.15);
+        return (int) Math.round(sessionMinutes * 1.15);
     }
 }

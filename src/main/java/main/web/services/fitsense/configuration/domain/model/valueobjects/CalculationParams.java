@@ -1,5 +1,7 @@
 package main.web.services.fitsense.configuration.domain.model.valueobjects;
 
+import com.fasterxml.jackson.annotation.JsonProperty;
+
 import java.util.List;
 
 /**
@@ -62,18 +64,41 @@ public record CalculationParams(
         public record AdherencePoints(Double minPct, Integer points) {}
         public record SkipPoints(Integer minCount, Integer points) {}
         public record DropPoints(Double minDropPp, Integer points) {}
-        public record Levels(Double low, Double moderate, Double high, Double critical) {}
+
+        /**
+         * Las claves del JSON estan en MAYUSCULAS (LOW, MODERATE, HIGH,
+         * CRITICAL) porque coinciden con los valores del enum RiskLevel, no con
+         * nombres de campo. La estrategia snake_case del mapper no las alcanza,
+         * asi que se declaran explicitas.
+         * <p>
+         * Sin esto los cuatro cortes llegan null, levelOf no encuentra ninguno
+         * y TODA metrica sale LOW, incluso con adherencia del 5 %.
+         */
+        public record Levels(
+                @JsonProperty("LOW") Double low,
+                @JsonProperty("MODERATE") Double moderate,
+                @JsonProperty("HIGH") Double high,
+                @JsonProperty("CRITICAL") Double critical) {}
     }
 
     public record Dropout(Integer daysWithoutWorkout) {}
 
-    /** Falla al arrancar, no en la primera semana de cierre. */
+    /**
+     * Falla al arrancar, no en la primera semana de cierre.
+     * <p>
+     * Comprueba tambien los cortes de riesgo uno a uno: que el objeto levels
+     * exista no garantiza que sus campos hayan mapeado, y un corte null no da
+     * error, solo devuelve LOW en silencio durante todo el piloto.
+     */
     public void requireComplete() {
         require(adherence, "adherence");
         require(adjustment, "adjustment");
         require(risk, "risk");
         require(dropout, "dropout");
         require(risk.levels(), "risk.levels");
+        require(risk.levels().moderate(), "risk.levels.MODERATE");
+        require(risk.levels().high(), "risk.levels.HIGH");
+        require(risk.levels().critical(), "risk.levels.CRITICAL");
         require(risk.adherencePoints(), "risk.adherence_points");
         require(adjustment.goodThresholdPct(), "adjustment.good_threshold_pct");
         require(adjustment.moderateThresholdPct(), "adjustment.moderate_threshold_pct");

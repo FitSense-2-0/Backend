@@ -10,7 +10,7 @@ import java.util.Optional;
  * Capa anticorrupcion hacia profiling. Traduce ProfileSnapshot al lenguaje de
  * planning: si manana el perfil cambia de forma, el cambio muere aqui.
  */
-@Service
+@Service("planningExternalProfilingService")
 public class ExternalProfilingService {
 
     private final ProfilingContextFacade profilingContextFacade;

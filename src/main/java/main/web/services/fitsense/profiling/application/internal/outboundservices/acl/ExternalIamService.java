@@ -10,7 +10,7 @@ import java.util.Optional;
  * Capa anticorrupcion hacia IAM. El contexto de perfil no conoce el agregado
  * User ni su repositorio: solo pregunta lo que necesita.
  */
-@Service
+@Service("profilingExternalIamService")
 public class ExternalIamService {
 
     private final IamContextFacade iamContextFacade;

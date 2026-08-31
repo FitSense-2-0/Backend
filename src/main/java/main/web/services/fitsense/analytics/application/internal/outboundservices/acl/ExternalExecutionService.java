@@ -9,7 +9,7 @@ import java.time.temporal.ChronoUnit;
 import java.util.List;
 
 /** Capa anticorrupcion hacia execution: el numerador de la semana. */
-@Service
+@Service("analyticsExternalPlanningService")
 public class ExternalExecutionService {
 
     private final ExecutionContextFacade executionContextFacade;

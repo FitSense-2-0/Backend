@@ -3,6 +3,8 @@ package main.web.services.fitsense.shared.infrastructure.json;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.PropertyNamingStrategies;
+import com.fasterxml.jackson.databind.SerializationFeature;
+import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import org.springframework.stereotype.Component;
 
 /**
@@ -17,8 +19,19 @@ import org.springframework.stereotype.Component;
 public class JsonSupport {
 
     private final ObjectMapper mapper = new ObjectMapper()
+            // Sin JavaTimeModule, un LocalDate revienta la serializacion. Al
+            // construir el mapper a mano no hay autoconfiguracion que lo
+            // registre, asi que hay que hacerlo aqui explicitamente.
+            .registerModule(new JavaTimeModule())
+            // Las fechas van como cadena ISO ("2026-08-31") y no como array de
+            // enteros: input_snapshot es evidencia que alguien va a leer.
+            .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS)
             .setPropertyNamingStrategy(PropertyNamingStrategies.SNAKE_CASE)
-            .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
+            .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false)
+            // Replicate devuelve output como cadena o como arreglo de fragmentos
+            // segun el modelo. Aceptar ambas formas evita un fallo de parseo que
+            // se contaria como fallo del modelo.
+            .configure(DeserializationFeature.ACCEPT_SINGLE_VALUE_AS_ARRAY, true);
 
     public String write(Object value) {
         try {

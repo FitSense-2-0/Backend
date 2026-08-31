@@ -17,9 +17,7 @@ import java.util.Set;
 import java.util.stream.Collectors;
 
 /**
- * Unico punto de entrada al catalogo desde otros contextos. Lo consume planning
- * para armar el conjunto elegible y para validar que el generador no invento
- * ejercicios (validacion 1 de la seccion 19).
+ * Unico punto de entrada al catalogo desde otros contextos.
  */
 @Service
 public class CatalogContextFacade {
@@ -36,13 +34,22 @@ public class CatalogContextFacade {
         this.equipmentTypeRepository = equipmentTypeRepository;
     }
 
+    /**
+     * @param excludeHighImpact fuera saltos y pliometria
+     * @param excludeFloorWork  fuera lo que exige bajar al suelo
+     * @param excludeAxialLoad  fuera carga axial e invertidos
+     */
     @Transactional(readOnly = true)
     public List<EligibleExerciseView> fetchEligibleExercises(List<String> equipmentCodes,
                                                              boolean excludeGymOnly,
                                                              int maxDifficultyLevel,
-                                                             List<Long> blockedExerciseIds) {
-        var query = new GetEligibleExercisesQuery(
-                equipmentCodes, excludeGymOnly, maxDifficultyLevel, blockedExerciseIds);
+                                                             List<Long> blockedExerciseIds,
+                                                             boolean excludeHighImpact,
+                                                             boolean excludeFloorWork,
+                                                             boolean excludeAxialLoad) {
+        var query = new GetEligibleExercisesQuery(equipmentCodes, excludeGymOnly,
+                maxDifficultyLevel, blockedExerciseIds,
+                excludeHighImpact, excludeFloorWork, excludeAxialLoad);
 
         var bodyParts = indexBodyParts();
         var equipment = indexEquipment();
@@ -52,15 +59,27 @@ public class CatalogContextFacade {
                 .toList();
     }
 
-    /** Nombre para mostrar de un conjunto de ids. Lo usa planning al exponer el plan. */
+    /** Detalle de un conjunto de ids. Lo usa planning para pintar el plan con media. */
     @Transactional(readOnly = true)
-    public Map<Long, String> fetchNames(Set<Long> exerciseIds) {
+    public Map<Long, EligibleExerciseView> fetchDetails(Set<Long> exerciseIds) {
         if (exerciseIds == null || exerciseIds.isEmpty()) return Map.of();
+
+        var bodyParts = indexBodyParts();
+        var equipment = indexEquipment();
+
         return exerciseIds.stream()
                 .map(id -> exerciseQueryService.handle(new GetExerciseByIdQuery(id)))
                 .filter(Optional::isPresent)
                 .map(Optional::get)
-                .collect(Collectors.toMap(Exercise::getId, Exercise::displayName, (a, b) -> a));
+                .collect(Collectors.toMap(Exercise::getId,
+                        exercise -> toView(exercise, bodyParts, equipment), (a, b) -> a));
+    }
+
+    /** Nombre para mostrar de un conjunto de ids. */
+    @Transactional(readOnly = true)
+    public Map<Long, String> fetchNames(Set<Long> exerciseIds) {
+        return fetchDetails(exerciseIds).entrySet().stream()
+                .collect(Collectors.toMap(Map.Entry::getKey, e -> e.getValue().nameEs(), (a, b) -> a));
     }
 
     private Map<Short, String> indexBodyParts() {
@@ -85,7 +104,9 @@ public class CatalogContextFacade {
                 equipment.get(exercise.getEquipmentId()),
                 exercise.getTargetMuscle(),
                 exercise.getDifficultyLevel(),
-                exercise.getDefaultPrescription().name()
-        );
+                exercise.getDefaultPrescription().name(),
+                exercise.getGifPath(),
+                exercise.getImagePath(),
+                exercise.getMediaAttribution());
     }
 }

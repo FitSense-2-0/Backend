@@ -1,28 +1,48 @@
 package main.web.services.fitsense.planning.infrastructure.generation.ai;
 
-import com.fasterxml.jackson.annotation.JsonProperty;
-
-import java.util.List;
+import com.fasterxml.jackson.databind.JsonNode;
 
 /**
- * Respuesta de Replicate. Con la cabecera Prefer: wait la prediccion llega ya
- * resuelta y no hace falta hacer polling.
+ * Respuesta de Replicate.
  * <p>
- * output puede llegar como una cadena o como un arreglo de fragmentos segun el
- * modelo, asi que se modela como lista y se une.
+ * output se declara como JsonNode y no como tipo concreto porque su forma
+ * depende del modelo: unos devuelven texto, otros un arreglo de fragmentos, y
+ * gpt-5-structured un objeto envuelto en json_output.
  */
 record ReplicateResponse(
         String id,
         String status,
-        List<String> output,
+        JsonNode output,
         String error,
-        @JsonProperty("logs") String logs
+        String logs,
+        Urls urls
 ) {
+    /** urls.get es la direccion para consultar el estado de una prediccion en curso. */
+    record Urls(String get, String cancel, String web) {}
+
     boolean succeeded() {
         return "succeeded".equals(status);
     }
 
+    /** Sigue trabajando: hay que volver a consultar, no es un fallo. */
+    boolean pending() {
+        return "starting".equals(status) || "processing".equals(status);
+    }
+
+    String pollUrl() {
+        return urls == null ? null : urls.get();
+    }
+
     String joinedOutput() {
-        return output == null ? "" : String.join("", output);
+        if (output == null || output.isNull()) return "";
+        if (output.isTextual()) return output.asText();
+        if (output.has("json_output")) return output.get("json_output").toString();
+        if (output.has("text")) return output.get("text").asText();
+        if (output.isArray()) {
+            var sb = new StringBuilder();
+            output.forEach(n -> sb.append(n.isTextual() ? n.asText() : n.toString()));
+            return sb.toString();
+        }
+        return output.toString();
     }
 }

@@ -7,7 +7,7 @@ import org.springframework.stereotype.Service;
  * Capa anticorrupcion hacia configuration. Planning solo necesita el divisor de
  * 18.1 para calcular volumen; los umbrales de adherencia son asunto de analytics.
  */
-@Service
+@Service("planningExternalConfigurationService")
 public class ExternalConfigurationService {
 
     private static final int DEFAULT_DIVISOR = 30;

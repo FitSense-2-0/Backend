@@ -36,6 +36,7 @@ public class PlanDraftValidator {
                         (a, b) -> a));
 
         validateExercisesAndDays(draft, context, eligible, problems);
+        validateFocusCoverage(draft, eligible, problems);
         validateSessions(draft, context, problems);
         validateVolumeTarget(draft, context, durationToRepsDivisor, problems);
         validateLoads(draft, context, problems);
@@ -104,6 +105,99 @@ public class PlanDraftValidator {
             if (consecutiveDays && previous.focus() == current.focus())
                 problems.add("V13: el enfoque %s se repite en dias consecutivos (%s y %s)."
                         .formatted(current.focus(), previous.scheduledDate(), current.scheduledDate()));
+        }
+    }
+
+    /**
+     * Validacion 15: cada entrenamiento debe cubrir de verdad su enfoque.
+     * <p>
+     * El 20.3 pide "al menos uno de cada body_part del enfoque". El motor de
+     * reglas lo cumple por construccion, asi que nunca se convirtio en
+     * validacion, y la IA no tenia nada que la obligara: en la primera prueba
+     * con el catalogo completo devolvio un FULL_BODY con seis ejercicios de
+     * biceps y triceps. Paso las trece validaciones porque ninguna miraba la
+     * distribucion.
+     * <p>
+     * Esto importa mas alla de la calidad del entrenamiento. Un plan que no
+     * encaja con lo que el participante espera baja su adherencia, y el sistema
+     * interpreta esa caida como falta de compromiso: reduce volumen cuando el
+     * problema era la seleccion. La validacion 8 mide si el generador OBEDECE
+     * la orden de volumen; esta mide si lo que produce tiene sentido.
+     * <p>
+     * El minimo se calcula contra lo que el conjunto elegible permite: si el
+     * usuario solo tiene material para dos grupos del enfoque, exigir tres
+     * dejaria la semana sin plan.
+     */
+    private void validateFocusCoverage(PlanDraft draft, Map<Long, CandidateExercise> eligible,
+                                       List<String> problems) {
+        for (var workout : draft.workouts()) {
+            var esperados = workout.focus().bodyPartCodes();
+
+            // Cuantos grupos del enfoque tienen material disponible.
+            long disponibles = esperados.stream()
+                    .filter(code -> eligible.values().stream()
+                            .anyMatch(candidate -> code.equals(candidate.bodyPartCode())))
+                    .count();
+
+            var cubiertos = workout.exercises().stream()
+                    .map(exercise -> eligible.get(exercise.exerciseId()))
+                    .filter(java.util.Objects::nonNull)
+                    .map(CandidateExercise::bodyPartCode)
+                    .filter(esperados::contains)
+                    .collect(Collectors.toSet());
+
+            // Cubrir el enfoque no basta si ademas se cuelan grupos ajenos. En
+            // la prueba salio un PULL con dos ejercicios de pecho, que es
+            // empuje y no traccion: la comprobacion de cobertura no lo veia
+            // porque solo contaba cuantos grupos del enfoque estaban presentes.
+            //
+            // FULL_BODY queda exento: su lista es orientativa y no tiene sentido
+            // rechazar un cuerpo completo por incluir gemelos o antebrazos.
+            if (workout.focus() != WorkoutFocus.FULL_BODY) {
+                var ajenos = workout.exercises().stream()
+                        .map(exercise -> eligible.get(exercise.exerciseId()))
+                        .filter(java.util.Objects::nonNull)
+                        .map(CandidateExercise::bodyPartCode)
+                        .filter(code -> !esperados.contains(code))
+                        .distinct()
+                        .toList();
+
+                if (!ajenos.isEmpty())
+                    problems.add(("V15: el entrenamiento del %s tiene enfoque %s pero incluye "
+                            + "ejercicios de %s. Ese enfoque solo admite: %s.")
+                            .formatted(workout.scheduledDate(), workout.focus(),
+                                    ajenos, esperados));
+            }
+
+            // Se pide cubrir todo lo que se pueda, con tope en 3: exigir los
+            // cinco grupos de FULL_BODY obligaria a sesiones de cinco
+            // ejercicios minimo, y con REDUCE_VOLUME puede haber solo dos.
+            int minimo = (int) Math.min(2, Math.min(disponibles, workout.exercises().size()));
+
+            if (cubiertos.size() < minimo)
+                problems.add(("V15: el entrenamiento del %s tiene enfoque %s y solo trabaja %s. "
+                        + "Debe cubrir al menos %d grupos distintos de: %s.")
+                        .formatted(workout.scheduledDate(), workout.focus(),
+                                cubiertos.isEmpty() ? "ningun grupo del enfoque" : cubiertos,
+                                minimo, esperados));
+
+            // Ademas, ningun grupo puede acaparar mas de la mitad de la sesion
+            // cuando el enfoque abarca varios.
+            if (esperados.size() >= 3 && workout.exercises().size() >= 4) {
+                var porGrupo = workout.exercises().stream()
+                        .map(exercise -> eligible.get(exercise.exerciseId()))
+                        .filter(java.util.Objects::nonNull)
+                        .collect(Collectors.groupingBy(CandidateExercise::bodyPartCode,
+                                Collectors.counting()));
+
+                porGrupo.forEach((grupo, cuantos) -> {
+                    if (cuantos > workout.exercises().size() / 2)
+                        problems.add(("V15: el entrenamiento del %s dedica %d de %d ejercicios a %s. "
+                                + "Reparte entre los grupos del enfoque %s.")
+                                .formatted(workout.scheduledDate(), cuantos,
+                                        workout.exercises().size(), grupo, workout.focus()));
+                });
+            }
         }
     }
 

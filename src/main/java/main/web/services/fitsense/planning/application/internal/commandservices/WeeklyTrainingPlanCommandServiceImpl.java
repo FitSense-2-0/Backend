@@ -85,7 +85,12 @@ public class WeeklyTrainingPlanCommandServiceImpl implements WeeklyTrainingPlanC
                 ? Math.max(1, adjustment.maxDifficultyLevel())
                 : profile.maxDifficultyLevel();
 
-        var eligible = externalCatalogService.fetchEligibleFor(profile, maxDifficulty);
+        // Restricciones por edad. Se aplican EN LA CONSULTA: la IA no llega a
+        // ver los ejercicios que no le corresponden al participante, asi que no
+        // puede proponerlos aunque ignore las instrucciones del prompt.
+        var safety = SafetyProfile.forAge(profile.age());
+
+        var eligible = externalCatalogService.fetchEligibleFor(profile, maxDifficulty, safety);
         if (eligible.isEmpty())
             throw new main.web.services.fitsense.catalog.domain.exceptions.EmptyEligibleSetException(
                     command.userId());
@@ -95,7 +100,8 @@ public class WeeklyTrainingPlanCommandServiceImpl implements WeeklyTrainingPlanC
                 command.userId(), week.previous().startDate(), divisor);
 
         var context = new PlanGenerationContext(command.userId(), weekNumber,
-                week.startDate(), week.endDate(), profile, adjustment, previousWeek, eligible);
+                week.startDate(), week.endDate(), profile, adjustment, previousWeek,
+                eligible, safety);
 
         var result = pipeline.run(context, divisor);
         var draft = result.draft();

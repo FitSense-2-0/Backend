@@ -48,8 +48,6 @@ public class ExerciseQueryServiceImpl implements ExerciseQueryService {
         Short equipmentId = query.equipmentCode() == null ? null
                 : equipmentTypeRepository.findByCode(query.equipmentCode()).map(eq -> eq.getId()).orElse((short) -1);
 
-        // Sin filtro equivale al maximo y a un comodin: asi ningun parametro
-        // viaja nulo hasta la consulta.
         short maxDifficulty = query.maxDifficultyLevel() == null
                 ? MAX_DIFFICULTY_LEVEL : query.maxDifficultyLevel();
         String search = query.search() == null ? "%" : "%" + query.search() + "%";
@@ -60,8 +58,7 @@ public class ExerciseQueryServiceImpl implements ExerciseQueryService {
 
     /**
      * Traduce las restricciones del perfil a ids de equipamiento antes de
-     * consultar. La regla de gimnasio se resuelve aqui y no en el WHERE: el
-     * catalogo ya sabe que equipos requieren gimnasio.
+     * consultar, y pasa las banderas de seguridad tal cual.
      */
     @Override
     @Transactional(readOnly = true)
@@ -88,7 +85,8 @@ public class ExerciseQueryServiceImpl implements ExerciseQueryService {
         blocked.add(NO_BLOCKED_SENTINEL);
         if (query.blockedExerciseIds() != null) blocked.addAll(query.blockedExerciseIds());
 
-        return exerciseRepository.findEligible(equipmentIds, (short) query.maxDifficultyLevel(), blocked);
+        return exerciseRepository.findEligible(equipmentIds, (short) query.maxDifficultyLevel(),
+                blocked, query.excludeHighImpact(), query.excludeFloorWork(), query.excludeAxialLoad());
     }
 
     @Override
