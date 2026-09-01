@@ -97,7 +97,7 @@ public class WeeklyTrainingPlan
 
     @OneToMany(mappedBy = "plan", cascade = CascadeType.ALL, orphanRemoval = true)
     @OrderBy("displayOrder ASC")
-    private final List<PlannedWorkout> workouts = new ArrayList<>();
+    private List<PlannedWorkout> workouts = new ArrayList<>();
 
     protected WeeklyTrainingPlan() {
         // JPA
@@ -180,6 +180,11 @@ public class WeeklyTrainingPlan
 
     public void attachOutputSnapshot(String outputSnapshot) {
         this.outputSnapshot = outputSnapshot;
+    }
+
+    public void recordAdjustment(String adjustmentApplied, String adjustmentReason) {
+        this.adjustmentApplied = adjustmentApplied;
+        this.adjustmentReason = adjustmentReason;
     }
 
     // ------------------------------------------------------------ transiciones

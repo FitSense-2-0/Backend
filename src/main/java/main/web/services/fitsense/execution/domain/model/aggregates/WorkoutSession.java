@@ -82,7 +82,7 @@ public class WorkoutSession extends AuditableAbstractAggregateRoot<WorkoutSessio
     private SessionStatus status;
 
     @OneToMany(mappedBy = "session", cascade = CascadeType.ALL, orphanRemoval = true)
-    private final List<WorkoutSessionExercise> exercises = new ArrayList<>();
+    private List<WorkoutSessionExercise> exercises = new ArrayList<>();
 
     protected WorkoutSession() {
         // JPA

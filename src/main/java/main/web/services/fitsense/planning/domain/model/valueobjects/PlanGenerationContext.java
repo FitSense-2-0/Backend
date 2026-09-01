@@ -1,5 +1,7 @@
 package main.web.services.fitsense.planning.domain.model.valueobjects;
 
+import main.web.services.fitsense.configuration.domain.model.valueobjects.PrescriptionParams;
+
 import java.time.LocalDate;
 import java.util.List;
 
@@ -19,7 +21,8 @@ public record PlanGenerationContext(
         PlanAdjustment adjustment,
         PreviousWeekSummary previousWeek,
         List<CandidateExercise> availableExercises,
-        SafetyProfile safety
+        SafetyProfile safety,
+        PrescriptionParams prescription
 ) {
     public static final String SCHEMA_VERSION = "GEN-IN-1.0";
 

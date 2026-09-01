@@ -19,7 +19,8 @@ public record CalculationParams(
         Adherence adherence,
         Adjustment adjustment,
         Risk risk,
-        Dropout dropout
+        Dropout dropout,
+        PrescriptionParams prescription
 ) {
 
     public record Adherence(

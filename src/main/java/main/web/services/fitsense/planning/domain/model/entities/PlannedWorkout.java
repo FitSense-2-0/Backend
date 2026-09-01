@@ -76,7 +76,7 @@ public class PlannedWorkout {
 
     @OneToMany(mappedBy = "plannedWorkout", cascade = CascadeType.ALL, orphanRemoval = true)
     @OrderBy("exerciseOrder ASC")
-    private final List<PlannedWorkoutExercise> exercises = new ArrayList<>();
+    private List<PlannedWorkoutExercise> exercises = new ArrayList<>();
 
     protected PlannedWorkout() {
         // JPA

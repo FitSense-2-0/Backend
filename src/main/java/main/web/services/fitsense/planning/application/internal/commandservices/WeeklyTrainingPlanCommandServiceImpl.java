@@ -101,7 +101,7 @@ public class WeeklyTrainingPlanCommandServiceImpl implements WeeklyTrainingPlanC
 
         var context = new PlanGenerationContext(command.userId(), weekNumber,
                 week.startDate(), week.endDate(), profile, adjustment, previousWeek,
-                eligible, safety);
+                eligible, safety, externalConfigurationService.prescriptionParams());
 
         var result = pipeline.run(context, divisor);
         var draft = result.draft();
