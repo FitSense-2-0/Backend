@@ -1,10 +1,17 @@
 -- =====================================================================
--- FitSense MVP 1.0 - V10: banderas de seguridad, dificultad y activacion
+-- FitSense MVP 1.0 - V10: banderas de seguridad y dificultad
 --
--- Tres cosas, en este orden:
+-- Dos cosas:
 --   1. Anade high_impact, requires_floor y axial_load a exercises.
 --   2. Deriva esas banderas y difficulty_level por reglas sobre name_en.
---   3. Activa el subconjunto con media e instrucciones en espanol.
+--
+-- LA ACTIVACION NO ESTA AQUI. Vive en V11, junto a las traducciones, porque
+-- depende de ellas: ck_exercises_active_translated impide activar un ejercicio
+-- sin name_es, y los 1.324 del dataset entran por V9 sin traducir.
+--
+-- Estaban juntas en una sola migracion y fallaba en cualquier entorno nuevo: la
+-- comprobacion encontraba 0 activos y abortaba. Separarlas deja a V10 dependiendo
+-- solo del esquema, que es lo que Hibernate necesita para arrancar.
 --
 -- POR QUE LAS BANDERAS
 -- El conjunto elegible filtraba por equipamiento, ubicacion, dificultad y
@@ -79,59 +86,19 @@ WHERE eq.equipment_id = e.equipment_id
   AND e.source_code NOT LIKE 'MVP-%';
 
 
--- 4. ACTIVACION -------------------------------------------------------
--- Criterio: equipamiento de casa o de gimnasio comun, con GIF y con
--- instrucciones en espanol. Sin gif la app muestra un hueco; sin
--- instrucciones el participante no sabe como ejecutarlo.
---
--- ck_exercises_active_translated exige name_es, que ya esta completo.
 
-UPDATE exercises e SET is_active = TRUE
-    FROM equipment_types eq
-WHERE eq.equipment_id = e.equipment_id
-  AND e.source_code NOT LIKE 'MVP-%'
-  AND eq.code IN ('body weight','dumbbell','band','kettlebell','stability ball',
-    'medicine ball','barbell','cable','ez barbell',
-    'leverage machine','smith machine')
-  AND e.gif_path IS NOT NULL
-  AND e.instructions_es IS NOT NULL
-  AND e.name_es IS NOT NULL;
-
-
--- 5. RETIRAR LA SEMILLA DE V8 -----------------------------------------
--- Se DESACTIVAN, no se borran: planned_workout_exercises tiene una FK hacia
--- exercises y los planes de prueba ya generados apuntan a estos ids. Borrarlos
--- reventaria la migracion, y ademas perderia la trazabilidad de esos planes.
-
-UPDATE exercises SET is_active = FALSE WHERE source_code LIKE 'MVP-%';
-
-
--- 6. COMPROBACION -----------------------------------------------------
+-- 4. COMPROBACION -----------------------------------------------------
 DO $$
 DECLARE
-activos      INTEGER;
-    sin_nombre   INTEGER;
-    principiante INTEGER;
+columnas INTEGER;
 BEGIN
-SELECT COUNT(*) INTO activos FROM exercises WHERE is_active;
-SELECT COUNT(*) INTO sin_nombre FROM exercises WHERE is_active AND name_es IS NULL;
+SELECT COUNT(*) INTO columnas FROM information_schema.columns
+WHERE table_name = 'exercises'
+  AND column_name IN ('high_impact', 'requires_floor', 'axial_load');
 
--- Cobertura minima de un perfil HOME + BEGINNER: si esto sale bajo, ese
--- perfil no podra generar planes y el fallo aparecera semanas despues.
-SELECT COUNT(*) INTO principiante
-FROM exercises e JOIN equipment_types eq ON eq.equipment_id = e.equipment_id
-WHERE e.is_active AND e.difficulty_level = 1
-  AND eq.code IN ('body weight','dumbbell','band') AND NOT eq.requires_gym;
-
-IF activos < 500 THEN
-        RAISE EXCEPTION 'Solo % ejercicios activos; se esperaban mas de 500', activos;
-END IF;
-    IF sin_nombre > 0 THEN
-        RAISE EXCEPTION '% ejercicios activos sin name_es', sin_nombre;
-END IF;
-    IF principiante < 100 THEN
-        RAISE EXCEPTION 'Solo % ejercicios para HOME+BEGINNER; insuficiente', principiante;
+IF columnas <> 3 THEN
+        RAISE EXCEPTION 'Faltan columnas de seguridad: solo se crearon %', columnas;
 END IF;
 
-    RAISE NOTICE 'V10 aplicada: % activos, % elegibles para HOME+BEGINNER', activos, principiante;
+    RAISE NOTICE 'V10 aplicada: banderas de seguridad y dificultad derivadas';
 END $$;
