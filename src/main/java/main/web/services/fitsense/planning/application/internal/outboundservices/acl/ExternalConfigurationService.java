@@ -1,5 +1,6 @@
 package main.web.services.fitsense.planning.application.internal.outboundservices.acl;
 
+import main.web.services.fitsense.configuration.domain.model.valueobjects.PrescriptionParams;
 import main.web.services.fitsense.configuration.interfaces.acl.ConfigurationContextFacade;
 import org.springframework.stereotype.Service;
 
@@ -22,5 +23,14 @@ public class ExternalConfigurationService {
         var divisor = configurationContextFacade.fetchActive().params()
                 .adjustment().durationToRepsDivisor();
         return divisor == null || divisor <= 0 ? DEFAULT_DIVISOR : divisor;
+    }
+
+    /**
+     * Rangos de prescripcion por objetivo (V12). Null si la configuracion activa
+     * es anterior y no trae el bloque: en ese caso las validaciones 16 y 17 se
+     * saltan, que es preferible a inventar limites.
+     */
+    public PrescriptionParams prescriptionParams() {
+        return configurationContextFacade.fetchActive().params().prescription();
     }
 }

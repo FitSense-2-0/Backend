@@ -56,7 +56,11 @@ public class PlanPromptBuilder {
                     completo. Cubre al menos 3 body_part distintos de los que el
                     enfoque admite, y que ningun grupo se lleve mas de la mitad
                     de la sesion.
-
+                16. Respeta el objetivo del participante al prescribir. Cada
+                    goal_type tiene un rango de repeticiones y el backend lo
+                    verifica: prescribir 8 repeticiones a quien quiere perder
+                    peso invalida el plan. Y ninguna sesion puede bajar del 70 %
+                    de session_minutes.
                 available_exercises viene agrupado por body_part y mezclado dentro
                 de cada grupo: NO tomes los primeros de la lista. Lee el body_part
                 de cada uno y elige a proposito.

@@ -116,6 +116,15 @@ public class WeeklyTrainingPlanCommandServiceImpl implements WeeklyTrainingPlanC
                 .orElseGet(() -> WeeklyTrainingPlan.firstVersion(command.userId(), weekNumber,
                         week.startDate(), week.endDate(), draft.source(), draft.modelName(),
                         snapshotJson, result.attempts()));
+        // firstVersion no recibe el ajuste porque una primera version normalmente
+        // no lo tiene. Pero la semana nueva del lunes SI llega con orden y sin
+        // plan previo que reemplazar, asi que entraba por esa rama y los dos
+        // campos quedaban en null aunque el ajuste se hubiera aplicado.
+        //
+        // El dato tambien esta en user_interventions, pero tenerlo aqui permite
+        // filtrar planes por tipo de ajuste sin un JOIN.
+        if (adjustment.isActive())
+            plan.recordAdjustment(adjustment.types().get(0).name(), draft.rationale());
 
         materialize(plan, draft, zone);
         plan.attachOutputSnapshot(jsonSupport.write(draft));

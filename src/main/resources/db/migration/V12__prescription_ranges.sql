@@ -25,6 +25,14 @@
 -- cada metrica queda ligada a la version con la que se produjo.
 -- =====================================================================
 
+-- ux_config_active es un indice unico parcial: solo admite una fila con
+-- is_active = true. Hay que desactivar la anterior ANTES de insertar la nueva,
+-- o el INSERT choca con ella.
+--
+-- No hay riesgo de quedarse sin configuracion: ambas sentencias van en la misma
+-- transaccion de Flyway, asi que nadie llega a ver el estado intermedio.
+UPDATE calculation_configs SET is_active = FALSE WHERE version = 'MVP-1.0';
+
 -- Se crea una version nueva en vez de editar MVP-1.0: las metricas ya
 -- calculadas deben seguir apuntando a los umbrales con los que se produjeron.
 INSERT INTO calculation_configs (version, description, params, is_active)
@@ -47,10 +55,6 @@ SELECT
               ),
     TRUE
 FROM calculation_configs WHERE version = 'MVP-1.0';
-
--- ux_config_active solo admite una activa: se desactiva la anterior DESPUES de
--- insertar la nueva para no dejar el sistema sin configuracion ni un instante.
-UPDATE calculation_configs SET is_active = FALSE WHERE version = 'MVP-1.0';
 
 
 DO $$

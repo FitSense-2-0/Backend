@@ -40,6 +40,7 @@ public class PlanDraftValidator {
         validateSessions(draft, context, problems);
         validateVolumeTarget(draft, context, durationToRepsDivisor, problems);
         validateLoads(draft, context, problems);
+        validatePrescriptionRanges(draft, context, problems);
 
         if (!problems.isEmpty()) throw new InvalidPlanDraftException(problems);
     }
@@ -304,5 +305,59 @@ public class PlanDraftValidator {
                         problems.add("V11: el ajuste pide bajar carga y el ejercicio %d sube de %s a %s kg."
                                 .formatted(exercise.exerciseId(), previous, exercise.targetLoadKg()));
                 });
+    }
+
+    /**
+     * Validaciones 16 y 17: la prescripcion debe corresponder al objetivo, y la
+     * sesion no puede quedarse muy por debajo de lo que el usuario declaro.
+     * <p>
+     * El objetivo llegaba al prompt pero nada obligaba a respetarlo: en la
+     * prueba, un perfil LOSE_WEIGHT recibio 3x8 —rango de fuerza, no de perdida
+     * de peso— y una sesion declarada de 45 minutos salio con 25.
+     * <p>
+     * Importa para el estudio, no solo para el entrenamiento. Un plan que no
+     * corresponde a lo que el participante pidio baja su adherencia, y el
+     * sistema interpreta esa caida como falta de compromiso: reduce volumen
+     * cuando el problema era la prescripcion.
+     * <p>
+     * Se salta entera si la configuracion activa no trae el bloque prescription.
+     * Mejor no validar que inventar limites.
+     */
+    private void validatePrescriptionRanges(PlanDraft draft, PlanGenerationContext context,
+                                            List<String> problems) {
+        var prescription = context.prescription();
+        if (prescription == null) return;
+
+        // 16: repeticiones dentro del rango del objetivo.
+        var rango = prescription.forGoal(context.profile().goalType());
+        if (rango != null && rango.minReps() != null && rango.maxReps() != null) {
+            draft.workouts().stream()
+                    .flatMap(workout -> workout.exercises().stream())
+                    .filter(exercise -> exercise.prescriptionType() == PrescriptionType.SETS_REPS)
+                    .filter(exercise -> exercise.plannedReps() != null)
+                    .forEach(exercise -> {
+                        int reps = exercise.plannedReps();
+                        if (reps < rango.minReps() || reps > rango.maxReps())
+                            problems.add(("V16: el ejercicio %d lleva %d repeticiones y el objetivo "
+                                    + "%s exige entre %d y %d.")
+                                    .formatted(exercise.exerciseId(), reps,
+                                            context.profile().goalType(),
+                                            rango.minReps(), rango.maxReps()));
+                    });
+        }
+
+        // 17: piso de duracion. El techo (+15 %) ya lo cubre la validacion 4;
+        // sin piso, el generador recortaba una sesion de 45 minutos a 25.
+        int piso = (int) Math.round(
+                context.effectiveSessionMinutes() * prescription.floorPct() / 100.0);
+
+        draft.workouts().stream()
+                .filter(workout -> workout.expectedDurationMinutes() < piso)
+                .forEach(workout -> problems.add(
+                        ("V17: el entrenamiento del %s dura %d minutos y el piso es %d "
+                                + "(%d %% de los %d declarados).")
+                                .formatted(workout.scheduledDate(), workout.expectedDurationMinutes(),
+                                        piso, prescription.floorPct(),
+                                        context.effectiveSessionMinutes())));
     }
 }
