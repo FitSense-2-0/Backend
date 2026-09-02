@@ -1,6 +1,6 @@
 package main.web.services.fitsense.planning.infrastructure.generation.ai;
 
-import main.web.services.fitsense.planning.domain.exceptions.InvalidPlanDraftException;
+import main.web.services.fitsense.planning.domain.exceptions.AiProviderUnavailableException;
 import main.web.services.fitsense.planning.domain.model.valueobjects.GenerationSource;
 import main.web.services.fitsense.planning.domain.model.valueobjects.PlanDraft;
 import main.web.services.fitsense.planning.domain.model.valueobjects.PlanGenerationContext;
@@ -73,6 +73,9 @@ public class ReplicateTrainingPlanGenerator implements TrainingPlanGenerator {
         input.put("json_schema", PlanJsonSchema.format());
 
         String rawBody = post(input);
+
+        // Traza temporal mientras se depura la integracion. Bajar a DEBUG antes
+        // del piloto: cada generacion vuelca varios KB al log.
         log.info("Replicate respondio (crudo): {}", rawBody);
 
         var response = jsonSupport.read(rawBody, ReplicateResponse.class);
@@ -90,7 +93,12 @@ public class ReplicateTrainingPlanGenerator implements TrainingPlanGenerator {
                     ? "respuesta vacia"
                     : response.status() + " " + response.error();
             log.warn("Replicate devolvio un estado no exitoso: {}", detail);
-            throw new InvalidPlanDraftException(List.of("El proveedor de IA fallo: " + detail));
+
+            // Excepcion de proveedor, no de plan invalido: el modelo no llego a
+            // proponer nada. El cortacircuitos solo cuenta estas, y en el
+            // analisis hay que poder separar "el modelo no supo" de "el
+            // proveedor estaba caido".
+            throw new AiProviderUnavailableException(detail);
         }
 
         return response.joinedOutput();
@@ -153,8 +161,7 @@ public class ReplicateTrainingPlanGenerator implements TrainingPlanGenerator {
                     .body(String.class);
         } catch (RuntimeException e) {
             log.warn("Replicate no respondio correctamente: {}", e.getMessage());
-            throw new InvalidPlanDraftException(List.of(
-                    "El proveedor de IA no respondio: " + e.getMessage()));
+            throw new AiProviderUnavailableException(e.getMessage());
         }
     }
 }
