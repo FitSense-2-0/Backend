@@ -18,8 +18,11 @@ public class ExternalExecutionService {
         this.executionContextFacade = executionContextFacade;
     }
 
-    public List<WeekSessionInput> fetchWeekSessions(Long userId, LocalDate weekStart, LocalDate weekEnd) {
-        return executionContextFacade.fetchCountedSessions(userId, weekStart, weekEnd).stream()
+    public List<WeekSessionInput> fetchWeekSessions(Long userId, LocalDate weekStart,
+                                                    LocalDate weekEnd,
+                                                    int durationToRepsDivisor) {
+        return executionContextFacade
+                .fetchCountedSessions(userId, weekStart, weekEnd, durationToRepsDivisor).stream()
                 .map(session -> new WeekSessionInput(
                         session.plannedWorkoutId(),
                         session.completionPercentage(),
@@ -27,6 +30,7 @@ public class ExternalExecutionService {
                         session.sessionRpe(),
                         session.satisfaction(),
                         session.completedExercises(),
+                        session.executedVolume(),
                         session.dominantSkipReason()))
                 .toList();
     }

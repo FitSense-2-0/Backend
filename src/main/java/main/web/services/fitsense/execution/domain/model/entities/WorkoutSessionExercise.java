@@ -130,4 +130,23 @@ public class WorkoutSessionExercise {
     public boolean isCompleted() {
         return status == ExerciseOutcome.COMPLETED;
     }
+
+    /**
+     * Trabajo realmente ejecutado en repeticiones equivalentes (18.1).
+     * <p>
+     * A diferencia de completionPercentage, esto NO se topa: hacer 15
+     * repeticiones donde se pidieron 12 son 15 repeticiones de trabajo real.
+     * El tope existe en la adherencia para que sobrecumplir no compense una
+     * sesion saltada; aqui el objetivo es justamente medir el trabajo.
+     */
+    public int executedEquivalentVolume(int durationToRepsDivisor) {
+        int total = 0;
+        if (actualRepsTotal != null) total += actualRepsTotal;
+        // Math.round y no division entera: planning redondea al calcular el
+        // volumen prescrito, y si aqui se truncara, una semana cumplida al
+        // 100 % saldria con menos volumen ejecutado que planificado.
+        if (actualDurationSeconds != null && durationToRepsDivisor > 0)
+            total += Math.round((float) actualDurationSeconds / durationToRepsDivisor);
+        return total;
+    }
 }

@@ -10,8 +10,9 @@ import java.util.*;
 import java.util.stream.Collectors;
 
 /**
- * Las cuatro metricas de 17.3 y el riesgo. Servicio de dominio puro: recibe el
- * denominador, las sesiones y los umbrales, y no consulta nada.
+ * Las cuatro metricas de 17.3, el volumen ejecutado y el riesgo. Servicio de
+ * dominio puro: recibe el denominador, las sesiones y los umbrales, y no
+ * consulta nada.
  * <p>
  * Que sea puro no es purismo: es lo que permite recalcular una semana meses
  * despues con otra version de umbrales y comparar, que es exactamente lo que
@@ -24,6 +25,7 @@ public class WeeklyMetricsCalculator {
                                         List<WeekSessionInput> sessions,
                                         BigDecimal previousWeightedAdherencePct,
                                         Short daysSinceLastWorkout,
+                                        int plannedWeekVolume,
                                         CalculationParams params) {
 
         if (!plan.hasActivePlan()) return withoutPlan(plan, daysSinceLastWorkout, params);
@@ -41,6 +43,7 @@ public class WeeklyMetricsCalculator {
         int skipped = 0;
         int completedExercises = 0;
         int trainingMinutes = 0;
+        int executedVolume = 0;
         double weightedNumerator = 0.0;
         double weightedDenominator = 0.0;
 
@@ -63,6 +66,12 @@ public class WeeklyMetricsCalculator {
                 else skipped++;
                 if (completion >= adherence.sessionCompletedThresholdPct()) completed++;
                 completedExercises += session.completedExercises();
+
+                // Volumen realmente ejecutado, SIN TOPE. Se suma solo dentro del
+                // recorrido del denominador: una sesion que no corresponde a un
+                // entrenamiento de la semana no cuenta, igual que en 17.4.
+                executedVolume += session.executedVolume();
+
                 if (session.activeMinutes() != null) trainingMinutes += session.activeMinutes();
                 if (session.sessionRpe() != null) rpes.add(session.sessionRpe());
                 if (session.satisfaction() != null) satisfactions.add(session.satisfaction());
@@ -97,6 +106,7 @@ public class WeeklyMetricsCalculator {
                 scheduled, valid, completed, skipped,
                 plan.assignedExercises(), completedExercises,
                 weighted, frequency, workoutAdherence, exerciseAdherence,
+                plannedWeekVolume, executedVolume,
                 trainingMinutes, averageRpe, average(satisfactions),
                 consecutiveSkips, daysSinceLastWorkout, dominant(skipReasons),
                 riskScore, levelOf(riskScore, params.risk().levels()), riskFactors, dropout);
@@ -106,6 +116,11 @@ public class WeeklyMetricsCalculator {
      * Semana sin plan. Todas las adherencias van NULL: sin denominador no hay
      * porcentaje, y un cero aqui contaminaria los promedios del estudio con
      * semanas en las que el sistema simplemente no propuso nada (19.4).
+     * <p>
+     * planned_week_volume va NULL por la misma razon, y asi lo exige
+     * ck_wum_planned_volume_null_when_no_plan. executed_volume va 0 y no NULL:
+     * sin plan no puede haber sesiones que cuenten, de modo que el cero es el
+     * valor real y no un hueco.
      */
     private MetricsCalculation withoutPlan(WeekPlanInput plan, Short daysSinceLastWorkout,
                                            CalculationParams params) {
@@ -118,6 +133,7 @@ public class WeeklyMetricsCalculator {
 
         return new MetricsCalculation(false, null, plan.weekNumber(),
                 0, 0, 0, 0, 0, 0, null, null, null, null,
+                null, 0,
                 0, null, null, 0, daysSinceLastWorkout, null,
                 null, null, factors, dropout);
     }

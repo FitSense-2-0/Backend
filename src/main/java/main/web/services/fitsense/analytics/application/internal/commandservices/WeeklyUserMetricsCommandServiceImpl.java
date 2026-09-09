@@ -13,7 +13,6 @@ import main.web.services.fitsense.shared.infrastructure.json.JsonSupport;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.math.BigDecimal;
 import java.util.Optional;
 
 @Service
@@ -46,9 +45,15 @@ public class WeeklyUserMetricsCommandServiceImpl implements WeeklyUserMetricsCom
         var week = TrainingWeek.containing(command.weekStartDate());
         var configuration = externalConfigurationService.fetchActive();
 
+        // Mismo divisor de 18.1 para lo prescrito y lo ejecutado: si cada lado
+        // usara el suyo, las dos cifras no serian comparables entre si.
+        int divisor = configuration.params().adjustment().durationToRepsDivisor();
+
         var plan = externalPlanningService.fetchWeekPlan(command.userId(), week.startDate());
+        int plannedWeekVolume = externalPlanningService.weekVolume(
+                command.userId(), week.startDate(), divisor);
         var sessions = externalExecutionService.fetchWeekSessions(
-                command.userId(), week.startDate(), week.endDate());
+                command.userId(), week.startDate(), week.endDate(), divisor);
         var daysSinceLastWorkout = externalExecutionService.daysSinceLastWorkout(
                 command.userId(), week.endDate());
 
@@ -61,7 +66,7 @@ public class WeeklyUserMetricsCommandServiceImpl implements WeeklyUserMetricsCom
                 .orElse(null);
 
         var calculation = calculator.calculate(plan, sessions, previousAdherence,
-                daysSinceLastWorkout, configuration.params());
+                daysSinceLastWorkout, plannedWeekVolume, configuration.params());
 
         var riskFactorsJson = calculation.riskFactors() == null || calculation.riskFactors().isEmpty()
                 ? null

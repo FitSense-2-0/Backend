@@ -1,6 +1,7 @@
 package main.web.services.fitsense.planning.infrastructure.generation.rules;
 
 import main.web.services.fitsense.planning.domain.model.valueobjects.*;
+import main.web.services.fitsense.planning.domain.services.SessionDurationEstimator;
 import main.web.services.fitsense.planning.domain.services.TrainingPlanGenerator;
 import org.springframework.stereotype.Component;
 import org.springframework.beans.factory.annotation.Value;
@@ -22,6 +23,12 @@ import java.util.*;
  * lleva semilla derivada de usuario y semana, no del reloj. La distribucion es
  * la misma, pero regenerar la misma semana produce el mismo plan, lo que permite
  * reproducir un caso al depurar o ante un reclamo de un participante.
+ * <p>
+ * DESVIACION DOCUMENTADA (V14): el 20.4 dice que expected_duration_minutes se
+ * toma de session_minutes. Ya no: se declara la duracion ESTIMADA a partir del
+ * contenido. Copiar el numero del perfil hacia que las sesiones de este
+ * generador pesaran mas que las de la IA para el mismo trabajo, y ese peso es
+ * el de la metrica primaria del estudio.
  */
 @Component
 public class RuleBasedTrainingPlanGenerator implements TrainingPlanGenerator {
@@ -36,10 +43,13 @@ public class RuleBasedTrainingPlanGenerator implements TrainingPlanGenerator {
     private static final short DURATION_REST_SECONDS = 45;
 
     private final int durationToRepsDivisor;
+    private final SessionDurationEstimator durationEstimator;
 
     public RuleBasedTrainingPlanGenerator(
-            @Value("${fitsense.volume.duration-to-reps-divisor:30}") int durationToRepsDivisor) {
+            @Value("${fitsense.volume.duration-to-reps-divisor:30}") int durationToRepsDivisor,
+            SessionDurationEstimator durationEstimator) {
         this.durationToRepsDivisor = durationToRepsDivisor;
+        this.durationEstimator = durationEstimator;
     }
 
     @Override
@@ -74,6 +84,8 @@ public class RuleBasedTrainingPlanGenerator implements TrainingPlanGenerator {
             for (var candidate : picked) {
                 exercises.add(toDraftExercise(candidate, prescription, context));
             }
+            // Provisional: la duracion definitiva se calcula despues de reducir
+            // el volumen, cuando el contenido ya es el final.
             workouts.add(new PlanDraft.DraftWorkout(dates.get(i), focus, nameOf(focus),
                     sessionMinutes, exercises));
         }
@@ -85,7 +97,7 @@ public class RuleBasedTrainingPlanGenerator implements TrainingPlanGenerator {
         // seleccion: asi el reparto de 20.5 opera sobre el mismo plan base que
         // se habria generado sin ajuste, y la reduccion es comparable.
         var adjusted = new VolumeReducer(durationToRepsDivisor).apply(draft, context);
-        return withRationale(adjusted, context);
+        return withRationale(withEstimatedDurations(adjusted, context), context);
     }
 
     // ------------------------------------------------------------------- 20.1
@@ -151,6 +163,38 @@ public class RuleBasedTrainingPlanGenerator implements TrainingPlanGenerator {
         return new PlanDraft.DraftExercise(candidate.exerciseId(), PrescriptionType.SETS_REPS,
                 prescription.sets(), prescription.reps(), null, null,
                 prescription.restSeconds(), null);
+    }
+
+    /**
+     * Declara la duracion estimada en vez de copiar session_minutes (§20.4
+     * modificado en V14).
+     * <p>
+     * Se aplica DESPUES de la reduccion de volumen: si se estimara antes, el
+     * numero declarado corresponderia a un contenido que ya no existe.
+     * <p>
+     * El motivo no es cosmetico. expected_duration_minutes es el peso de la
+     * adherencia ponderada. Copiar el numero del perfil hacia que las sesiones
+     * del motor de reglas pesaran sistematicamente mas que las de la IA para el
+     * mismo trabajo, y eso es un sesgo de medicion dependiente del brazo.
+     */
+    private PlanDraft withEstimatedDurations(PlanDraft draft, PlanGenerationContext context) {
+        var prescription = context.prescription();
+        if (prescription == null) return draft;
+
+        // La validacion 4 sigue mandando: nunca por encima del techo del perfil.
+        int techo = context.profile().maxSessionMinutes();
+
+        var workouts = draft.workouts().stream()
+                .map(workout -> new PlanDraft.DraftWorkout(
+                        workout.scheduledDate(),
+                        workout.focus(),
+                        workout.name(),
+                        Math.min(techo, durationEstimator.estimateMinutes(workout, prescription)),
+                        workout.exercises()))
+                .toList();
+
+        return new PlanDraft(draft.source(), draft.modelName(), draft.planName(),
+                draft.declaredTotalVolume(), draft.rationale(), workouts);
     }
 
     private String nameOf(WorkoutFocus focus) {

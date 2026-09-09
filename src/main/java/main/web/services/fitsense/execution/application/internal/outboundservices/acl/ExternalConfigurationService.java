@@ -14,6 +14,7 @@ public class ExternalConfigurationService {
     public ExternalConfigurationService(ConfigurationContextFacade configurationContextFacade) {
         this.configurationContextFacade = configurationContextFacade;
     }
+
     /**
      * Rangos de prescripcion por objetivo (V12). Null si la configuracion activa
      * es anterior: en ese caso las validaciones 16 y 17 no se aplican, que es
@@ -30,5 +31,17 @@ public class ExternalConfigurationService {
                 adherence.sessionValidThresholdPct(),
                 adherence.exerciseCompletedThresholdPct(),
                 adherence.completionCapPct());
+    }
+
+    /**
+     * Antiguedad maxima de un reporte retroactivo, en dias (V16).
+     * <p>
+     * Viaja al agregado como parametro por la misma razon que los umbrales: el
+     * dominio no consulta la base, y asi la regla queda ligada a la version de
+     * configuracion vigente cuando se registro la sesion.
+     */
+    public int retroactiveReportDays() {
+        return configurationContextFacade.fetchActive().params()
+                .adherence().retroactiveDaysOrDefault();
     }
 }

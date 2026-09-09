@@ -29,12 +29,20 @@ public class ExecutionContextFacade {
         this.sessionRepository = sessionRepository;
     }
 
-    /** Solo las sesiones que cuentan: el ultimo intento finalizado de cada entrenamiento. */
+    /**
+     * Solo las sesiones que cuentan: el ultimo intento finalizado de cada
+     * entrenamiento.
+     * <p>
+     * El divisor viaja como parametro y no se lee aqui dentro por la misma razon
+     * que los umbrales de 17.2: el dominio no consulta configuracion, y asi la
+     * semana queda medida con la version vigente en ese momento.
+     */
     @Transactional(readOnly = true)
     public List<SessionSummaryView> fetchCountedSessions(Long userId, LocalDate weekStart,
-                                                         LocalDate weekEnd) {
+                                                         LocalDate weekEnd,
+                                                         int durationToRepsDivisor) {
         return queryService.handle(new GetSessionsByWeekQuery(userId, weekStart, weekEnd)).stream()
-                .map(ExecutionContextFacade::toView)
+                .map(session -> toView(session, durationToRepsDivisor))
                 .toList();
     }
 
@@ -44,7 +52,7 @@ public class ExecutionContextFacade {
         return sessionRepository.findLastCountedSessionDate(userId);
     }
 
-    private static SessionSummaryView toView(WorkoutSession session) {
+    private static SessionSummaryView toView(WorkoutSession session, int durationToRepsDivisor) {
         return new SessionSummaryView(
                 session.getId(),
                 session.getPlannedWorkoutId(),
@@ -56,6 +64,7 @@ public class ExecutionContextFacade {
                 session.getSessionRpe(),
                 session.getSatisfaction(),
                 session.completedExerciseCount(),
+                session.executedEquivalentVolume(durationToRepsDivisor),
                 session.dominantSkipReason().map(Enum::name).orElse(null));
     }
 }

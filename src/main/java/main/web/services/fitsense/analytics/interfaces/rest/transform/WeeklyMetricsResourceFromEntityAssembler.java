@@ -25,6 +25,8 @@ public class WeeklyMetricsResourceFromEntityAssembler {
                 entity.getFrequencyAdherencePct(),
                 entity.getWorkoutAdherencePct(),
                 entity.getExerciseAdherencePct(),
+                entity.getPlannedWeekVolume(),
+                entity.getExecutedVolume(),
                 entity.getTotalTrainingMinutes(),
                 entity.getAverageSessionRpe(),
                 entity.getAverageSatisfaction(),

@@ -78,6 +78,21 @@ public class WeeklyUserMetrics {
     @Column(name = "exercise_adherence_pct", precision = 5, scale = 2)
     private BigDecimal exerciseAdherencePct;
 
+    /**
+     * Lectura con denominador fijo. weighted_adherence_pct mide contra un plan
+     * que el ajuste cambia cada semana; estas dos no se mueven, y son lo que
+     * permite distinguir "entreno mas" de "se le pidio menos".
+     * <p>
+     * plannedWeekVolume va NULL sin plan, igual que las adherencias
+     * (ck_wum_planned_volume_null_when_no_plan). executedVolume va 0: sin plan
+     * no puede haber sesiones que cuenten, asi que el cero es el valor real.
+     */
+    @Column(name = "planned_week_volume")
+    private Integer plannedWeekVolume;
+
+    @Column(name = "executed_volume", nullable = false)
+    private Integer executedVolume;
+
     @Column(name = "total_training_minutes", nullable = false)
     private Integer totalTrainingMinutes;
 
@@ -153,6 +168,8 @@ public class WeeklyUserMetrics {
         this.frequencyAdherencePct = calculation.frequencyAdherencePct();
         this.workoutAdherencePct = calculation.workoutAdherencePct();
         this.exerciseAdherencePct = calculation.exerciseAdherencePct();
+        this.plannedWeekVolume = calculation.plannedWeekVolume();
+        this.executedVolume = calculation.executedVolume();
         this.totalTrainingMinutes = calculation.totalTrainingMinutes();
         this.averageSessionRpe = calculation.averageSessionRpe();
         this.averageSatisfaction = calculation.averageSatisfaction();

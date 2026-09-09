@@ -59,8 +59,17 @@ public class PlanPromptBuilder {
                 16. Respeta el objetivo del participante al prescribir. Cada
                     goal_type tiene un rango de repeticiones y el backend lo
                     verifica: prescribir 8 repeticiones a quien quiere perder
-                    peso invalida el plan. Y ninguna sesion puede bajar del 70 %
-                    de session_minutes.
+                    peso invalida el plan.
+                17. expected_duration_minutes debe corresponder al contenido
+                    real, no a session_minutes. El backend lo recalcula asi y
+                    rechaza un desvio mayor al 20 %:
+                      minutos = 5 de calentamiento
+                              + por ejercicio: series x repeticiones x 3 s
+                                               (o series x segundos si es DURATION)
+                              + por ejercicio: (series - 1) x descanso
+                              + 1 minuto de transicion entre ejercicios
+                    Declara lo que de verdad dura. Inflarlo NO ayuda: distorsiona
+                    la medicion de adherencia y invalida el plan igual.
                 available_exercises viene agrupado por body_part y mezclado dentro
                 de cada grupo: NO tomes los primeros de la lista. Lee el body_part
                 de cada uno y elige a proposito.

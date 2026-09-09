@@ -29,8 +29,18 @@ public record CalculationParams(
             Double exerciseCompletedThresholdPct,
             Double completionCapPct,
             String primaryMetric,
-            String validAttemptRule
-    ) {}
+            String validAttemptRule,
+
+            /**
+             * Antiguedad maxima admitida en un reporte retroactivo. Cubre el
+             * olvido de un dia o dos, no la reapertura de semanas cerradas.
+             */
+            Integer retroactiveReportDays
+    ) {
+        public int retroactiveDaysOrDefault() {
+            return retroactiveReportDays == null ? 7 : retroactiveReportDays;
+        }
+    }
 
     public record Adjustment(
             Double goodThresholdPct,
@@ -51,8 +61,38 @@ public record CalculationParams(
             Integer minSetsPerExercise,
             Integer minRepsPerSet,
             Integer minDurationSeconds,
-            Integer durationToRepsDivisor
-    ) {}
+            Integer durationToRepsDivisor,
+            /**
+             * Semanas seguidas de cumplimiento antes de subir el volumen. El
+             * ACSM condiciona el incremento al desempeno sostenido, no al
+             * calendario (regla del "2 por 2"). No aplica a la recuperacion:
+             * volver a un volumen ya sostenido no es sobrecarga progresiva.
+             */
+            Integer progressionRequiredWeeks,
+
+            /**
+             * Tope acumulado sobre la linea base, simetrico al piso del -40 %.
+             * Sin referencia: decision de diseno declarada para el piloto.
+             */
+            Double maxCumulativeVolumeIncreasePct,
+
+            /**
+             * RPE promedio por encima del cual NO se progresa aunque la
+             * adherencia sea alta. NULL = desactivado, que es el estado actual:
+             * la escala no esta instrumentada (sin anclajes, opcional, sin
+             * familiarizacion previa segun Foster et al. 2001).
+             */
+            Double progressionRpeCeiling
+    ) {
+        public int requiredWeeksOrDefault() {
+            return progressionRequiredWeeks == null ? 1 : progressionRequiredWeeks;
+        }
+
+        public double maxIncreaseOrDefault() {
+            return maxCumulativeVolumeIncreasePct == null
+                    ? Double.MAX_VALUE : maxCumulativeVolumeIncreasePct;
+        }
+    }
 
     public record Risk(
             List<AdherencePoints> adherencePoints,

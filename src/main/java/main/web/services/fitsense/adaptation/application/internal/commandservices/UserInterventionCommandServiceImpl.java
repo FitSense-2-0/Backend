@@ -1,5 +1,6 @@
 package main.web.services.fitsense.adaptation.application.internal.commandservices;
 
+import main.web.services.fitsense.analytics.interfaces.acl.WeeklyMetricsView;
 import main.web.services.fitsense.adaptation.application.internal.outboundservices.acl.*;
 import main.web.services.fitsense.adaptation.domain.exceptions.InterventionNotFoundException;
 import main.web.services.fitsense.adaptation.domain.model.aggregates.UserIntervention;
@@ -82,12 +83,23 @@ public class UserInterventionCommandServiceImpl implements UserInterventionComma
                 command.userId(), week.startDate(), divisor);
         int baselineVolume = externalPlanningService.baselineVolume(command.userId(), divisor);
 
+        // La semana anterior a la medida. Con ella se exige desempeno sostenido
+        // antes de progresar, en lugar de subir el volumen por calendario.
+        // Ausente en la primera semana del participante: entonces no se progresa.
+        var previousAdherence = externalAnalyticsService
+                .fetchWeek(command.userId(), week.previous().startDate())
+                .filter(WeeklyMetricsView::isActionable)
+                .map(WeeklyMetricsView::weightedAdherencePct)
+                .orElse(null);
+
         var context = new AdjustmentContext(
                 metrics.weightedAdherencePct(),
                 metrics.dominantSkipReason(),
                 previousVolume,
                 baselineVolume,
-                previousDays, previousMinutes, previousDifficulty);
+                previousDays, previousMinutes, previousDifficulty,
+                previousAdherence,
+                metrics.averageSessionRpe());
 
         var decision = decisionTable.decide(context, configuration.params());
 

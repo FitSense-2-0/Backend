@@ -10,11 +10,11 @@ import java.util.*;
 import java.util.stream.Collectors;
 
 /**
- * Las trece validaciones de 19.3, aplicadas al borrador antes de persistir.
+ * Las diecisiete validaciones de 19.3, aplicadas al borrador antes de persistir.
  * <p>
- * Servicio de dominio puro y sin estado: no consulta la base. Todo lo que
- * necesita viaja en el contexto, que es exactamente lo que se guarda en
- * input_snapshot, asi que una validacion puede reproducirse meses despues.
+ * Servicio de dominio puro: no consulta la base. Todo lo que necesita viaja en
+ * el contexto, que es exactamente lo que se guarda en input_snapshot, asi que
+ * una validacion puede reproducirse meses despues.
  * <p>
  * Devuelve TODOS los problemas, no el primero: esa lista es el insumo del
  * segundo intento de la IA.
@@ -27,6 +27,12 @@ public class PlanDraftValidator {
     private static final int MIN_SETS = 2;
     private static final int MIN_REPS = 6;
     private static final int MIN_DURATION_SECONDS = 20;
+
+    private final SessionDurationEstimator durationEstimator;
+
+    public PlanDraftValidator(SessionDurationEstimator durationEstimator) {
+        this.durationEstimator = durationEstimator;
+    }
 
     public void validate(PlanDraft draft, PlanGenerationContext context, int durationToRepsDivisor) {
         var problems = new ArrayList<String>();
@@ -309,16 +315,26 @@ public class PlanDraftValidator {
 
     /**
      * Validaciones 16 y 17: la prescripcion debe corresponder al objetivo, y la
-     * sesion no puede quedarse muy por debajo de lo que el usuario declaro.
+     * duracion declarada debe corresponder al contenido.
      * <p>
-     * El objetivo llegaba al prompt pero nada obligaba a respetarlo: en la
-     * prueba, un perfil LOSE_WEIGHT recibio 3x8 —rango de fuerza, no de perdida
-     * de peso— y una sesion declarada de 45 minutos salio con 25.
+     * V17 CAMBIO RESPECTO AL §19.3. Antes exigia que la duracion declarada no
+     * bajara del 70 % de session_minutes. Esa regla castigaba al generador que
+     * estima con honestidad y premiaba al que copia el numero del perfil: con un
+     * ajuste de -30 %, la IA declaro 28 minutos para un contenido de ~25 y fue
+     * rechazada, mientras el motor de reglas declaro 45 para un contenido de ~27
+     * y paso.
      * <p>
-     * Importa para el estudio, no solo para el entrenamiento. Un plan que no
-     * corresponde a lo que el participante pidio baja su adherencia, y el
-     * sistema interpreta esa caida como falta de compromiso: reduce volumen
-     * cuando el problema era la prescripcion.
+     * El piso desaparece por completo, no solo cuando hay ajuste: la
+     * prescripcion por defecto del §20.4 (5 ejercicios de 3x12 con 60 s de
+     * descanso) rinde unos 28 minutos, asi que un piso del 70 % sobre 45 dejaria
+     * sin plan valido al motor de reglas, que es el respaldo de ultima
+     * instancia. Que la prescripcion por defecto no llene la sesion declarada es
+     * un problema real, pero se resuelve revisando el §20.4 con el asesor, no
+     * bloqueando la generacion.
+     * <p>
+     * Lo que impide un plan ridiculamente corto sigue siendo la validacion 5
+     * (minimo 2 ejercicios), la 9 (minimo 2 series y 6 repeticiones) y, cuando
+     * hay ajuste, la 8 (el volumen objetivo).
      * <p>
      * Se salta entera si la configuracion activa no trae el bloque prescription.
      * Mejor no validar que inventar limites.
@@ -346,18 +362,18 @@ public class PlanDraftValidator {
                     });
         }
 
-        // 17: piso de duracion. El techo (+15 %) ya lo cubre la validacion 4;
-        // sin piso, el generador recortaba una sesion de 45 minutos a 25.
-        int piso = (int) Math.round(
-                context.effectiveSessionMinutes() * prescription.floorPct() / 100.0);
+        // 17: coherencia entre lo declarado y el contenido.
+        int tolerancia = prescription.durationTolerancePctOrDefault();
+        for (var workout : draft.workouts()) {
+            int estimada = durationEstimator.estimateMinutes(workout, prescription);
+            if (estimada <= 0) continue;
 
-        draft.workouts().stream()
-                .filter(workout -> workout.expectedDurationMinutes() < piso)
-                .forEach(workout -> problems.add(
-                        ("V17: el entrenamiento del %s dura %d minutos y el piso es %d "
-                                + "(%d %% de los %d declarados).")
-                                .formatted(workout.scheduledDate(), workout.expectedDurationMinutes(),
-                                        piso, prescription.floorPct(),
-                                        context.effectiveSessionMinutes())));
+            double desvio = Math.abs(workout.expectedDurationMinutes() - estimada) * 100.0 / estimada;
+            if (desvio > tolerancia)
+                problems.add(("V17: el entrenamiento del %s declara %d minutos pero su contenido "
+                        + "dura unos %d (desvio de %.0f %%, maximo %d %%).")
+                        .formatted(workout.scheduledDate(), workout.expectedDurationMinutes(),
+                                estimada, desvio, tolerancia));
+        }
     }
 }

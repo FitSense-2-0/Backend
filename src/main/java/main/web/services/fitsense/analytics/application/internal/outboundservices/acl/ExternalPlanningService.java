@@ -31,4 +31,13 @@ public class ExternalPlanningService {
 
         return new WeekPlanInput(week.planId(), week.weekNumber(), workouts);
     }
+
+    /**
+     * Volumen prescrito de la semana (18.1). Es el par fijo del volumen
+     * ejecutado: juntos permiten leer si la adherencia subio porque el
+     * participante entreno mas o porque el plan pidio menos.
+     */
+    public int weekVolume(Long userId, LocalDate weekStartDate, int durationToRepsDivisor) {
+        return planningContextFacade.fetchWeekVolume(userId, weekStartDate, durationToRepsDivisor);
+    }
 }

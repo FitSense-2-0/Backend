@@ -15,6 +15,7 @@ public record WeekSessionInput(
         Short sessionRpe,
         Short satisfaction,
         int completedExercises,
+        int executedVolume,
         String dominantSkipReason
 ) {
     public double completion() {

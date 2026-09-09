@@ -112,12 +112,36 @@ public class WorkoutSession extends AuditableAbstractAggregateRoot<WorkoutSessio
      * Reporte retroactivo: el usuario declara que ya lo hizo. Nace finalizada,
      * porque no hay nada que seguir en vivo.
      */
+    /**
+     * Sesion creada desde un reporte retroactivo.
+     * <p>
+     * El limite de antiguedad no es cosmetico. El reporte no recalcula las
+     * metricas, asi que una sesion muy vieja deja el sistema incoherente:
+     * planned_workouts pasa a COMPLETED mientras weekly_user_metrics sigue
+     * contando ese entrenamiento como saltado y user_intervention conserva la
+     * adherencia con la que decidio el ajuste. Tres tablas que dejan de
+     * coincidir, y un dato exportado que ya no se puede reconstruir.
+     */
     public static WorkoutSession reported(Long userId, Long plannedWorkoutId, Long planId,
-                                          short attemptNumber, OffsetDateTime performedAt) {
+                                          short attemptNumber, OffsetDateTime performedAt,
+                                          int maxRetroactiveDays) {
         if (performedAt == null)
             throw new DomainRuleViolationException("Indica cuando hiciste el entrenamiento.");
         if (performedAt.isAfter(OffsetDateTime.now()))
             throw new DomainRuleViolationException("No puedes reportar un entrenamiento futuro.");
+
+        // Se comparan FECHAS, no instantes. Con minusDays sobre la hora actual
+        // el corte se desplaza durante el dia: un entrenamiento del martes
+        // pasado se admite el martes por la manana y se rechaza por la noche.
+        // Para el participante eso es incomprensible, y para los datos
+        // significa que la regla depende de la hora en que abrio la app.
+        var oldest = OffsetDateTime.now(performedAt.getOffset())
+                .toLocalDate().minusDays(maxRetroactiveDays);
+        if (performedAt.toLocalDate().isBefore(oldest))
+            throw new DomainRuleViolationException(
+                    ("Solo puedes registrar entrenamientos de los ultimos %d dias. "
+                            + "Las semanas anteriores ya estan cerradas.")
+                            .formatted(maxRetroactiveDays));
 
         return new WorkoutSession(userId, plannedWorkoutId, planId, attemptNumber,
                 performedAt, SessionSource.USER_REPORTED, SessionStatus.IN_PROGRESS);
@@ -255,5 +279,12 @@ public class WorkoutSession extends AuditableAbstractAggregateRoot<WorkoutSessio
     private static void requireSatisfaction(Short satisfaction) {
         if (satisfaction != null && (satisfaction < 1 || satisfaction > 5))
             throw new DomainRuleViolationException("La satisfaccion va de 1 a 5.");
+    }
+
+    /** Suma del trabajo ejecutado de todos los ejercicios, en repeticiones equivalentes. */
+    public int executedEquivalentVolume(int durationToRepsDivisor) {
+        return exercises.stream()
+                .mapToInt(exercise -> exercise.executedEquivalentVolume(durationToRepsDivisor))
+                .sum();
     }
 }

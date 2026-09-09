@@ -25,6 +25,8 @@ public record MetricsCalculation(
         BigDecimal frequencyAdherencePct,
         BigDecimal workoutAdherencePct,
         BigDecimal exerciseAdherencePct,
+        Integer plannedWeekVolume,
+        int executedVolume,
         int totalTrainingMinutes,
         BigDecimal averageSessionRpe,
         BigDecimal averageSatisfaction,

@@ -127,11 +127,13 @@ public class WorkoutSessionCommandServiceImpl implements WorkoutSessionCommandSe
             throw new DomainRuleViolationException(
                     "Indica que ejercicios hiciste: un reporte vacio no es un entrenamiento.");
 
+        var thresholds = externalConfigurationService.thresholds();
+
         short attempt = (short) (sessionRepository.findLastAttemptNumber(command.plannedWorkoutId()) + 1);
         var session = WorkoutSession.reported(command.userId(), command.plannedWorkoutId(),
-                workout.planId(), attempt, command.performedAt());
+                workout.planId(), attempt, command.performedAt(),
+                externalConfigurationService.retroactiveReportDays());
 
-        var thresholds = externalConfigurationService.thresholds();
         for (var reported : command.exercises()) {
             var target = findTarget(workout, reported.plannedExerciseId());
             session.recordExercise(target, reported.actualSets(), reported.actualRepsTotal(),

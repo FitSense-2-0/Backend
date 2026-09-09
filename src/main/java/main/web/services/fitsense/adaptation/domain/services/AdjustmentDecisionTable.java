@@ -116,21 +116,79 @@ public class AdjustmentDecisionTable {
     /**
      * Progresion con adherencia buena (18.2 y 18.4).
      * <p>
-     * Si el participante viene de reducciones, la semana siguiente RECUPERA en
-     * tramos del 10 %, no de golpe: volver de un -40 % al volumen original en
-     * una semana es justo el salto que provoco la caida. Solo cuando ya esta en
-     * su linea base se aplica la progresion del +5 %.
+     * Dos caminos distintos, y la diferencia importa:
+     * <p>
+     * RECUPERAR. Si el participante viene de reducciones, vuelve hacia su linea
+     * base en tramos del 10 %, no de golpe: saltar de un -40 % al volumen
+     * original en una semana es justo lo que provoco la caida. Esto NO exige el
+     * criterio de dos semanas, porque no es sobrecarga progresiva: es restituir
+     * un volumen que la persona ya sostuvo.
+     * <p>
+     * PROGRESAR por encima de la linea base si es sobrecarga, y ahi si se exige
+     * evidencia de desempeno sostenido. El ACSM condiciona el incremento a
+     * mantener el rendimiento en dos sesiones consecutivas, no a que pase una
+     * semana.
      */
     private double progressionFor(AdjustmentContext context, CalculationParams.Adjustment limits) {
         boolean belowBaseline = context.baselineWeekVolume() > 0
                 && context.previousWeekVolume() < context.baselineWeekVolume();
-        return belowBaseline ? limits.recoveryStepPct() : limits.progressionIncreasePct();
+
+        if (belowBaseline) return limits.recoveryStepPct();
+
+        return meetsProgressionCriteria(context, limits)
+                ? limits.progressionIncreasePct()
+                : 0.0;
     }
 
     /**
-     * Aplica el cambio y luego los dos topes: nunca por debajo del 60 % del
-     * volumen de la semana 1 (reduccion acumulada maxima del 40 %) ni por encima
-     * de la linea base cuando se esta recuperando.
+     * Condiciones para subir el volumen por encima de la linea base.
+     * <p>
+     * La adherencia mide que la persona HIZO lo pedido, no que le resultara
+     * llevadero. Progresar solo por adherencia le sube la carga igual a quien
+     * va sobrado y a quien esta al limite aguantando; al segundo lo empuja
+     * exactamente hacia el abandono, y el abandono es variable de resultado del
+     * estudio.
+     */
+    private boolean meetsProgressionCriteria(AdjustmentContext context,
+                                             CalculationParams.Adjustment limits) {
+        // 1. Desempeno sostenido: N semanas seguidas cumpliendo.
+        if (limits.requiredWeeksOrDefault() >= 2) {
+            var previous = context.previousWeekAdherencePct();
+            if (previous == null || previous.doubleValue() < limits.goodThresholdPct())
+                return false;
+        }
+
+        // 2. Sin RPE no se progresa. Ante dato faltante, la opcion conservadora:
+        // no sabemos si le costo, asi que no le subimos la carga.
+        var rpe = context.averageSessionRpe();
+        if (rpe == null) return false;
+
+        // 3. Techo de esfuerzo percibido. DESACTIVADO mientras la escala no este
+        // instrumentada: session_rpe es hoy un entero 1-10 sin anclajes
+        // verbales, opcional y sin familiarizacion previa, y Foster et al.
+        // (2001) exigen esa familiarizacion para que la medida sea fiable.
+        // Decidir la progresion con ese dato seria decidir con ruido.
+        if (limits.progressionRpeCeiling() != null
+                && rpe.doubleValue() > limits.progressionRpeCeiling())
+            return false;
+
+        return true;
+    }
+
+    /**
+     * Aplica el cambio y luego los topes de 18.4, ahora simetricos.
+     * <p>
+     * ABAJO: nunca por debajo del 60 % del volumen de la semana 1.
+     * ARRIBA: nunca por encima del 125 % de esa misma linea base.
+     * <p>
+     * El tope superior es nuevo. Sin el, un participante que cumple bien crece
+     * un 5 % COMPUESTO sin limite: +41 % en ocho semanas, +71 % en doce. Eso es
+     * un riesgo de lesion producido por la regla, no por el participante, y
+     * ademas garantiza que tarde o temprano la adherencia se rompa, generando
+     * una oscilacion que en los resultados parece adaptacion.
+     * <p>
+     * No tiene respaldo en la literatura: es una decision de diseno declarada
+     * para el piloto, del mismo orden de magnitud que el piso ya existente.
      */
     private int boundedTargetVolume(AdjustmentContext context,
                                     CalculationParams.Adjustment limits,
@@ -145,6 +203,12 @@ public class AdjustmentDecisionTable {
             int floor = (int) Math.round(baseline
                     * (1 - limits.maxCumulativeVolumeReductionPct() / 100.0));
             target = Math.max(target, floor);
+
+            double maxIncrease = limits.maxIncreaseOrDefault();
+            if (maxIncrease != Double.MAX_VALUE) {
+                int ceiling = (int) Math.round(baseline * (1 + maxIncrease / 100.0));
+                target = Math.min(target, ceiling);
+            }
 
             // Al recuperar no se pasa de la linea base: la progresion por encima
             // es otra decision, y se toma la semana siguiente.
