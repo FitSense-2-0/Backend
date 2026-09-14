@@ -65,6 +65,8 @@ public class ExecutionContextFacade {
                 session.getSatisfaction(),
                 session.completedExerciseCount(),
                 session.executedEquivalentVolume(durationToRepsDivisor),
+                session.executedReps(),
+                session.executedSeconds(),
                 session.dominantSkipReason().map(Enum::name).orElse(null));
     }
 }

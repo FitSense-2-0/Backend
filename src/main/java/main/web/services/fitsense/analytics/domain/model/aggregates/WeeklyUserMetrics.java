@@ -92,6 +92,23 @@ public class WeeklyUserMetrics {
 
     @Column(name = "executed_volume", nullable = false)
     private Integer executedVolume;
+    /**
+     * Componentes crudos, antes del factor de conversion (V17). Permiten
+     * recalcular el equivalente con otro divisor y reportar que proporcion del
+     * volumen viene de ejercicios de duracion: esa proporcion es la cota de
+     * cuanto puede influir el factor en las conclusiones.
+     */
+    @Column(name = "planned_reps")
+    private Integer plannedReps;
+
+    @Column(name = "planned_seconds")
+    private Integer plannedSeconds;
+
+    @Column(name = "executed_reps", nullable = false)
+    private Integer executedReps;
+
+    @Column(name = "executed_seconds", nullable = false)
+    private Integer executedSeconds;
 
     @Column(name = "total_training_minutes", nullable = false)
     private Integer totalTrainingMinutes;
@@ -170,6 +187,10 @@ public class WeeklyUserMetrics {
         this.exerciseAdherencePct = calculation.exerciseAdherencePct();
         this.plannedWeekVolume = calculation.plannedWeekVolume();
         this.executedVolume = calculation.executedVolume();
+        this.plannedReps = calculation.plannedReps();
+        this.plannedSeconds = calculation.plannedSeconds();
+        this.executedReps = calculation.executedReps();
+        this.executedSeconds = calculation.executedSeconds();
         this.totalTrainingMinutes = calculation.totalTrainingMinutes();
         this.averageSessionRpe = calculation.averageSessionRpe();
         this.averageSatisfaction = calculation.averageSatisfaction();

@@ -159,4 +159,12 @@ public class PlannedWorkout {
                 .mapToInt(exercise -> exercise.equivalentVolume(durationToRepsDivisor))
                 .sum();
     }
+
+    public int plannedRepsTotal() {
+        return exercises.stream().mapToInt(PlannedWorkoutExercise::plannedRepsTotal).sum();
+    }
+
+    public int plannedSecondsTotal() {
+        return exercises.stream().mapToInt(PlannedWorkoutExercise::plannedSecondsTotal).sum();
+    }
 }

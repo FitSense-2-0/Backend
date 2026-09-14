@@ -52,6 +52,14 @@ public class WeeklyUserMetricsCommandServiceImpl implements WeeklyUserMetricsCom
         var plan = externalPlanningService.fetchWeekPlan(command.userId(), week.startDate());
         int plannedWeekVolume = externalPlanningService.weekVolume(
                 command.userId(), week.startDate(), divisor);
+
+        // Componentes crudos del volumen prescrito (V17): repeticiones y segundos
+        // por separado, sin el factor de conversion. El equivalente se sigue
+        // guardando, pero con estos se puede rehacer la cuenta con otro divisor
+        // y reportar que proporcion del volumen viene de ejercicios de duracion.
+        var breakdown = externalPlanningService.weekBreakdown(
+                command.userId(), week.startDate());
+
         var sessions = externalExecutionService.fetchWeekSessions(
                 command.userId(), week.startDate(), week.endDate(), divisor);
         var daysSinceLastWorkout = externalExecutionService.daysSinceLastWorkout(
@@ -66,7 +74,8 @@ public class WeeklyUserMetricsCommandServiceImpl implements WeeklyUserMetricsCom
                 .orElse(null);
 
         var calculation = calculator.calculate(plan, sessions, previousAdherence,
-                daysSinceLastWorkout, plannedWeekVolume, configuration.params());
+                daysSinceLastWorkout, plannedWeekVolume,
+                breakdown.reps(), breakdown.seconds(), configuration.params());
 
         var riskFactorsJson = calculation.riskFactors() == null || calculation.riskFactors().isEmpty()
                 ? null

@@ -15,6 +15,7 @@ public record ReportWorkoutResource(
         @NotNull(message = "Indica cuando lo hiciste.")
         @Schema(example = "2026-08-20T18:30:00-05:00") OffsetDateTime performedAt,
 
+        @NotNull(message = "Indica el esfuerzo percibido de la sesion, de 1 a 10.")
         @Min(value = 1, message = "El esfuerzo percibido va de 1 a 10.")
         @Max(value = 10, message = "El esfuerzo percibido va de 1 a 10.")
         Short sessionRpe,

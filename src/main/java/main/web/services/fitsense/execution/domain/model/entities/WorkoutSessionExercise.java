@@ -149,4 +149,14 @@ public class WorkoutSessionExercise {
             total += Math.round((float) actualDurationSeconds / durationToRepsDivisor);
         return total;
     }
+
+    /** Repeticiones ejecutadas, sin convertir ni topar (V17). */
+    public int executedReps() {
+        return actualRepsTotal == null ? 0 : actualRepsTotal;
+    }
+
+    /** Segundos ejecutados, sin convertir ni topar (V17). */
+    public int executedSeconds() {
+        return actualDurationSeconds == null ? 0 : actualDurationSeconds;
+    }
 }

@@ -73,6 +73,21 @@ public class PlanningContextFacade {
         return new WeekDenominatorView(last.getId(), last.getWeekNumber(), List.copyOf(workouts));
     }
 
+    /**
+     * Componentes crudos de la semana (V17). Se resuelve sobre la misma version
+     * del plan que fetchWeekVolume —la ultima— para que el equivalente y sus
+     * ingredientes describan siempre el mismo plan.
+     */
+    @Transactional(readOnly = true)
+    public WeekVolumeBreakdown fetchWeekBreakdown(Long userId, LocalDate weekStartDate) {
+        var plans = planRepository.findByUserIdAndWeekStartDateOrderByPlanVersionAsc(
+                userId, weekStartDate);
+        if (plans.isEmpty()) return WeekVolumeBreakdown.empty();
+
+        var plan = plans.get(plans.size() - 1);
+        return new WeekVolumeBreakdown(plan.plannedRepsTotal(), plan.plannedSecondsTotal());
+    }
+
     /** Volumen en repeticiones equivalentes de la ultima version de una semana (18.1). */
     @Transactional(readOnly = true)
     public int fetchWeekVolume(Long userId, LocalDate weekStartDate, int divisor) {

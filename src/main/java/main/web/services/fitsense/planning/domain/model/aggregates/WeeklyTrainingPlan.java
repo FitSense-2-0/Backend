@@ -234,4 +234,12 @@ public class WeeklyTrainingPlan
                 .mapToInt(w -> w.equivalentVolume(durationToRepsDivisor))
                 .sum();
     }
+
+    public int plannedRepsTotal() {
+        return workouts.stream().mapToInt(PlannedWorkout::plannedRepsTotal).sum();
+    }
+
+    public int plannedSecondsTotal() {
+        return workouts.stream().mapToInt(PlannedWorkout::plannedSecondsTotal).sum();
+    }
 }

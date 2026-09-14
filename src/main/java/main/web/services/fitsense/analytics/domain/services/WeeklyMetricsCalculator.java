@@ -26,6 +26,8 @@ public class WeeklyMetricsCalculator {
                                         BigDecimal previousWeightedAdherencePct,
                                         Short daysSinceLastWorkout,
                                         int plannedWeekVolume,
+                                        int plannedReps,
+                                        int plannedSeconds,
                                         CalculationParams params) {
 
         if (!plan.hasActivePlan()) return withoutPlan(plan, daysSinceLastWorkout, params);
@@ -44,6 +46,8 @@ public class WeeklyMetricsCalculator {
         int completedExercises = 0;
         int trainingMinutes = 0;
         int executedVolume = 0;
+        int executedReps = 0;
+        int executedSeconds = 0;
         double weightedNumerator = 0.0;
         double weightedDenominator = 0.0;
 
@@ -71,6 +75,8 @@ public class WeeklyMetricsCalculator {
                 // recorrido del denominador: una sesion que no corresponde a un
                 // entrenamiento de la semana no cuenta, igual que en 17.4.
                 executedVolume += session.executedVolume();
+                executedReps += session.executedReps();
+                executedSeconds += session.executedSeconds();
 
                 if (session.activeMinutes() != null) trainingMinutes += session.activeMinutes();
                 if (session.sessionRpe() != null) rpes.add(session.sessionRpe());
@@ -107,6 +113,7 @@ public class WeeklyMetricsCalculator {
                 plan.assignedExercises(), completedExercises,
                 weighted, frequency, workoutAdherence, exerciseAdherence,
                 plannedWeekVolume, executedVolume,
+                plannedReps, plannedSeconds, executedReps, executedSeconds,
                 trainingMinutes, averageRpe, average(satisfactions),
                 consecutiveSkips, daysSinceLastWorkout, dominant(skipReasons),
                 riskScore, levelOf(riskScore, params.risk().levels()), riskFactors, dropout);
@@ -117,10 +124,12 @@ public class WeeklyMetricsCalculator {
      * porcentaje, y un cero aqui contaminaria los promedios del estudio con
      * semanas en las que el sistema simplemente no propuso nada (19.4).
      * <p>
-     * planned_week_volume va NULL por la misma razon, y asi lo exige
-     * ck_wum_planned_volume_null_when_no_plan. executed_volume va 0 y no NULL:
-     * sin plan no puede haber sesiones que cuenten, de modo que el cero es el
-     * valor real y no un hueco.
+     * Lo prescrito va NULL por la misma razon —volumen equivalente y sus dos
+     * componentes crudos—, y asi lo exigen ck_wum_planned_volume_null_when_no_plan
+     * y ck_wum_components_null_when_no_plan.
+     * <p>
+     * Lo ejecutado va 0 y no NULL: sin plan no puede haber sesiones que cuenten,
+     * de modo que el cero es el valor real y no un hueco.
      */
     private MetricsCalculation withoutPlan(WeekPlanInput plan, Short daysSinceLastWorkout,
                                            CalculationParams params) {
@@ -131,10 +140,14 @@ public class WeeklyMetricsCalculator {
         factors.put("no_active_plan", true);
         if (dropout) factors.put("dropout_days", daysSinceLastWorkout);
 
-        return new MetricsCalculation(false, null, plan.weekNumber(),
-                0, 0, 0, 0, 0, 0, null, null, null, null,
+        return new MetricsCalculation(
+                false, null, plan.weekNumber(),
+                0, 0, 0, 0, 0, 0,
+                null, null, null, null,
                 null, 0,
-                0, null, null, 0, daysSinceLastWorkout, null,
+                null, null, 0, 0,
+                0, null, null,
+                0, daysSinceLastWorkout, null,
                 null, null, factors, dropout);
     }
 

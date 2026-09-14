@@ -16,6 +16,8 @@ public record SessionSummaryView(
         Short satisfaction,
         int completedExercises,
         int executedVolume,
+        int executedReps,
+        int executedSeconds,
         String dominantSkipReason
 ) {
     public boolean isCompleted() {

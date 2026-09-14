@@ -171,6 +171,10 @@ public class WorkoutSession extends AuditableAbstractAggregateRoot<WorkoutSessio
      * Cierra la sesion. assignedExercises es el numero de ejercicios INDICADOS,
      * no los registrados: si el usuario hizo tres de seis, el denominador siguen
      * siendo seis. Usar los registrados daria 100 % a media sesion.
+     * <p>
+     * sessionRpe es obligatorio: sin el, el factor de sobreesfuerzo del riesgo
+     * nunca se activa y la semana queda sin la unica medida de intensidad
+     * percibida que recoge el estudio. Ver requireRpe.
      */
     public void finish(Short sessionRpe, Short satisfaction, Short activeMinutes,
                        int assignedExercises, CompletionThresholds thresholds) {
@@ -271,8 +275,20 @@ public class WorkoutSession extends AuditableAbstractAggregateRoot<WorkoutSessio
         return (short) Math.max(0, Math.min(minutes, Short.MAX_VALUE));
     }
 
+    /**
+     * El RPE es OBLIGATORIO para cerrar una sesion. No se exige con NOT NULL en
+     * la columna porque las filas historicas tienen nulos y la migracion
+     * fallaria: la regla vive aqui, y asi cubre por igual el cierre en vivo y el
+     * reporte retroactivo, que pasan los dos por finish().
+     * <p>
+     * La satisfaccion sigue siendo opcional a proposito: son constructos
+     * distintos y forzar los dos anade friccion sin ganancia.
+     */
     private static void requireRpe(Short sessionRpe) {
-        if (sessionRpe != null && (sessionRpe < 1 || sessionRpe > 10))
+        if (sessionRpe == null)
+            throw new DomainRuleViolationException(
+                    "Indica el esfuerzo percibido de la sesion, de 1 a 10.");
+        if (sessionRpe < 1 || sessionRpe > 10)
             throw new DomainRuleViolationException("El esfuerzo percibido va de 1 a 10.");
     }
 
@@ -286,5 +302,13 @@ public class WorkoutSession extends AuditableAbstractAggregateRoot<WorkoutSessio
         return exercises.stream()
                 .mapToInt(exercise -> exercise.executedEquivalentVolume(durationToRepsDivisor))
                 .sum();
+    }
+
+    public int executedReps() {
+        return exercises.stream().mapToInt(WorkoutSessionExercise::executedReps).sum();
+    }
+
+    public int executedSeconds() {
+        return exercises.stream().mapToInt(WorkoutSessionExercise::executedSeconds).sum();
     }
 }

@@ -118,4 +118,15 @@ public class PlannedWorkoutExercise {
             throw new DomainRuleViolationException("Falta el tipo de prescripcion del ejercicio.");
         return type;
     }
+
+    public int plannedRepsTotal() {
+        if (prescriptionType != PrescriptionType.SETS_REPS) return 0;
+        return (plannedSets == null || plannedReps == null) ? 0 : plannedSets * plannedReps;
+    }
+
+    public int plannedSecondsTotal() {
+        if (prescriptionType == PrescriptionType.SETS_REPS) return 0;
+        if (plannedDurationSeconds == null) return 0;
+        return (plannedSets == null ? 1 : plannedSets) * plannedDurationSeconds;
+    }
 }

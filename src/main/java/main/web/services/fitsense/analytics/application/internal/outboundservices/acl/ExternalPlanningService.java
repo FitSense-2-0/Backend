@@ -2,6 +2,7 @@ package main.web.services.fitsense.analytics.application.internal.outboundservic
 
 import main.web.services.fitsense.analytics.domain.model.valueobjects.WeekPlanInput;
 import main.web.services.fitsense.planning.interfaces.acl.PlanningContextFacade;
+import main.web.services.fitsense.planning.interfaces.acl.WeekVolumeBreakdown;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDate;
@@ -39,5 +40,9 @@ public class ExternalPlanningService {
      */
     public int weekVolume(Long userId, LocalDate weekStartDate, int durationToRepsDivisor) {
         return planningContextFacade.fetchWeekVolume(userId, weekStartDate, durationToRepsDivisor);
+    }
+    /** Componentes crudos del volumen prescrito (V17). */
+    public WeekVolumeBreakdown weekBreakdown(Long userId, LocalDate weekStartDate) {
+        return planningContextFacade.fetchWeekBreakdown(userId, weekStartDate);
     }
 }
