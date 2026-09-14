@@ -7,8 +7,14 @@ import java.util.*;
 
 /**
  * Seleccion de ejercicios de 20.3: al menos uno de cada body_part del enfoque,
- * luego se completa al azar sin repetir dentro de la misma sesion, evitando los
- * usados en los 7 dias anteriores mientras el conjunto elegible lo permita.
+ * y el resto repartido por turnos entre esos mismos grupos.
+ * <p>
+ * DESVIACION DOCUMENTADA: el 20.3 dice "se completa al azar". Ya no. El azar
+ * dentro del enfoque concentraba en el grupo mas poblado del catalogo —waist
+ * tiene 84 ejercicios de peso corporal y lower legs 13— y eso hacia que
+ * LOWER_BODY cayera sistematicamente por la regla de la mitad de V15. El
+ * respaldo determinista incumplia las mismas validaciones que el generador al
+ * que respalda, asi que dejaba al participante sin plan.
  */
 class ExerciseSelector {
 
@@ -31,39 +37,57 @@ class ExerciseSelector {
 
     List<CandidateExercise> pick(WorkoutFocus focus, int count) {
         var picked = new LinkedHashSet<CandidateExercise>();
+        var grupos = List.copyOf(focus.bodyPartCodes());
 
-        // Primero uno de cada parte corporal del enfoque, para que una sesion de
-        // empuje no salga con cinco variantes de press de banca.
-        for (var bodyPartCode : focus.bodyPartCodes()) {
-            if (picked.size() >= count) break;
-            pickOneFrom(pool(bodyPartCode), picked).ifPresent(picked::add);
+        // V15 rechaza cuando un grupo supera la mitad de la sesion (division
+        // entera), y solo si el enfoque abarca 3 o mas grupos y la sesion tiene
+        // 4 o mas ejercicios. Fuera de ese caso no hay tope que respetar.
+        int tope = (grupos.size() >= 3 && count >= 4) ? count / 2 : count;
+
+        var porGrupo = new LinkedHashMap<String, Integer>();
+        grupos.forEach(code -> porGrupo.put(code, 0));
+
+        // Reparto por turnos. Con n ejercicios sobre k grupos ninguno pasa de
+        // ceil(n/k), que para todos los enfoques de 3+ grupos cae dentro del
+        // tope: LOWER_BODY con 5 sale 2+2+1, que es la unica reparticion legal.
+        boolean progreso = true;
+        while (picked.size() < count && progreso) {
+            progreso = false;
+            for (var code : grupos) {
+                if (picked.size() >= count) break;
+                if (porGrupo.get(code) >= tope) continue;
+                var candidate = pickOneFrom(pool(code), picked);
+                if (candidate.isEmpty()) continue;
+                picked.add(candidate.get());
+                porGrupo.merge(code, 1, Integer::sum);
+                progreso = true;
+            }
         }
 
-        // Luego se completa al azar dentro del enfoque.
-        var focusPool = focus.bodyPartCodes().stream()
-                .flatMap(code -> pool(code).stream())
-                .distinct()
-                .toList();
-        while (picked.size() < count) {
-            var candidate = pickOneFrom(focusPool, picked);
-            if (candidate.isEmpty()) break;
-            picked.add(candidate.get());
+        // Solo FULL_BODY admite grupos ajenos: V15 lo exime explicitamente. Para
+        // el resto, completar con otro grupo produce el rechazo "incluye
+        // ejercicios de [...]", asi que es preferible una sesion mas corta. La
+        // regla de la mitad tampoco aplica por debajo de 4 ejercicios, de modo
+        // que acortar nunca empeora la situacion.
+        if (focus == WorkoutFocus.FULL_BODY) {
+            completarCon(all, picked, count);
         }
 
-        // Ultimo recurso: cualquier ejercicio elegible.
-        //
-        // El diseno no contempla este caso, pero los datos lo exigen: en el
-        // dataset solo hay 2 ejercicios de hombro con peso corporal, asi que un
-        // perfil HOME + BEGINNER con enfoque PUSH se queda corto. Un plan menos
-        // especifico es mejor que una sesion de un solo ejercicio, que ademas
-        // fallaria la validacion 5.
-        while (picked.size() < count) {
-            var candidate = pickOneFrom(all, picked);
-            if (candidate.isEmpty()) break;
-            picked.add(candidate.get());
-        }
+        // V5 exige un minimo de 2 ejercicios. Si el enfoque no da ni para eso
+        // —un PUSH en casa sin equipo, donde solo hay 2 ejercicios de hombro—
+        // es preferible un ejercicio ajeno a una sesion que no existe.
+        if (picked.size() < 2) completarCon(all, picked, 2);
 
         return List.copyOf(picked);
+    }
+
+    private void completarCon(List<CandidateExercise> pool,
+                              Set<CandidateExercise> picked, int count) {
+        while (picked.size() < count) {
+            var candidate = pickOneFrom(pool, picked);
+            if (candidate.isEmpty()) break;
+            picked.add(candidate.get());
+        }
     }
 
     private List<CandidateExercise> pool(String bodyPartCode) {

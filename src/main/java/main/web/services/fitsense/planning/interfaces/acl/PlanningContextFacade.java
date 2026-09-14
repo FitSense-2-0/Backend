@@ -15,7 +15,9 @@ import main.web.services.fitsense.planning.infrastructure.persistence.jpa.reposi
 import main.web.services.fitsense.shared.domain.model.valueobjects.SkipReason;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.annotation.Propagation;
 
+import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
@@ -116,11 +118,15 @@ public class PlanningContextFacade {
     }
 
     /** Genera el plan de la semana nueva con el ajuste ya decidido. */
-    @Transactional
+    /** Genera el plan de la semana nueva con el ajuste ya decidido. */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
     public Optional<Long> generateWeeklyPlan(Long userId, LocalDate weekStartDate,
-                                             PlanAdjustment adjustment) {
+                                             PlanAdjustment adjustment,
+                                             BigDecimal previousAdherencePct,
+                                             BigDecimal previousAverageRpe) {
         return commandService.handle(new GenerateWeeklyPlanCommand(
-                        userId, weekStartDate, adjustment, false))
+                        userId, weekStartDate, adjustment, false,
+                        previousAdherencePct, previousAverageRpe))
                 .map(WeeklyTrainingPlan::getId);
     }
 

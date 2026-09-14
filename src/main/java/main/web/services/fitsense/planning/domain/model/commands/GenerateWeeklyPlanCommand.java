@@ -2,6 +2,7 @@ package main.web.services.fitsense.planning.domain.model.commands;
 
 import main.web.services.fitsense.planning.domain.model.valueobjects.PlanAdjustment;
 
+import java.math.BigDecimal;
 import java.time.LocalDate;
 
 /**
@@ -16,9 +17,11 @@ public record GenerateWeeklyPlanCommand(
         Long userId,
         LocalDate weekStartDate,
         PlanAdjustment adjustment,
-        boolean replaceExisting
+        boolean replaceExisting,
+        BigDecimal previousWeekAdherencePct,
+        BigDecimal previousWeekAverageRpe
 ) {
     public static GenerateWeeklyPlanCommand firstPlan(Long userId, LocalDate weekStartDate) {
-        return new GenerateWeeklyPlanCommand(userId, weekStartDate, null, false);
+        return new GenerateWeeklyPlanCommand(userId, weekStartDate, null, false, null, null);
     }
 }

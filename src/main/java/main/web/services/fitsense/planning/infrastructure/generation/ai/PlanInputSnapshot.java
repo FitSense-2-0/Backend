@@ -45,7 +45,17 @@ public record PlanInputSnapshot(
             @JsonProperty("available_days") List<Short> availableDays,
             @JsonProperty("session_minutes") int sessionMinutes,
             @JsonProperty("training_location") String trainingLocation,
-            @JsonProperty("max_difficulty_level") int maxDifficultyLevel) {}
+            @JsonProperty("max_difficulty_level") int maxDifficultyLevel,
+            @JsonProperty("rep_range") RepRange repRange) {}
+
+    /**
+     * El rango de repeticiones del objetivo. Antes lo verificaba V16 sin
+     * enviarlo: el modelo tenia que adivinarlo y se refugiaba en el minimo de 6
+     * de la regla 9, que es el unico numero que el prompt si declara.
+     */
+    public record RepRange(
+            @JsonProperty("min_reps") Integer minReps,
+            @JsonProperty("max_reps") Integer maxReps) {}
 
     public record Adjustment(
             List<String> types,
@@ -89,10 +99,14 @@ public record PlanInputSnapshot(
                 profile.weightKg(), profile.targetWeightKg(), profile.fitnessLevel(),
                 profile.goalType(), profile.goalText(), profile.healthNotes());
 
+        var rango = context.prescription() == null ? null
+                : context.prescription().forGoal(profile.goalType());
+
         var constraints = new Constraints(context.weekNumber(), context.weekStartDate(),
                 context.weekEndDate(), context.effectiveDaysPerWeek(), profile.availableDays(),
                 context.effectiveSessionMinutes(), profile.trainingLocation(),
-                context.effectiveMaxDifficulty());
+                context.effectiveMaxDifficulty(),
+                rango == null ? null : new RepRange(rango.minReps(), rango.maxReps()));
 
         var adjustment = context.adjustment() == null ? null : new Adjustment(
                 context.adjustment().types().stream().map(Enum::name).toList(),

@@ -97,7 +97,8 @@ public class WeeklyTrainingPlanCommandServiceImpl implements WeeklyTrainingPlanC
 
         short weekNumber = resolveWeekNumber(command.userId(), previousActive.orElse(null));
         var previousWeek = previousWeekAssembler.assemble(
-                command.userId(), week.previous().startDate(), divisor);
+                command.userId(), week.previous().startDate(), divisor,
+                command.previousWeekAdherencePct(), command.previousWeekAverageRpe());
 
         var context = new PlanGenerationContext(command.userId(), weekNumber,
                 week.startDate(), week.endDate(), profile, adjustment, previousWeek,

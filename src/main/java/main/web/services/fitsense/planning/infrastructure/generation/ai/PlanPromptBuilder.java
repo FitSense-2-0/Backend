@@ -56,10 +56,14 @@ public class PlanPromptBuilder {
                     completo. Cubre al menos 3 body_part distintos de los que el
                     enfoque admite, y que ningun grupo se lleve mas de la mitad
                     de la sesion.
-                16. Respeta el objetivo del participante al prescribir. Cada
-                    goal_type tiene un rango de repeticiones y el backend lo
-                    verifica: prescribir 8 repeticiones a quien quiere perder
-                    peso invalida el plan.
+                16. Respeta el objetivo del participante al prescribir. El rango
+                    permitido viene en constraints.rep_range: ningun
+                    planned_reps puede quedar por debajo de min_reps ni por
+                    encima de max_reps, y el backend lo verifica. Recuerda que
+                    la regla 9 impone ademas un minimo absoluto de 6, asi que el
+                    rango efectivo empieza en el mayor de los dos. Varia dentro
+                    del rango entre ejercicios: un accesorio admite mas
+                    repeticiones que un basico.
                 17. expected_duration_minutes debe corresponder al contenido
                     real, no a session_minutes. El backend lo recalcula asi y
                     rechaza un desvio mayor al 20 %:

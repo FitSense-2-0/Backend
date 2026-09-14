@@ -77,9 +77,14 @@ public class WeeklyCycleService {
         // 5. Generar.
         var adjustment = order.map(WeeklyCycleService::toAdjustment).orElse(PlanAdjustment.none());
 
+
+        var previousAdherence = metrics.map(view -> view.weightedAdherencePct()).orElse(null);
+        var previousRpe = metrics.map(view -> view.averageSessionRpe()).orElse(null);
+
         Optional<Long> planId;
         try {
-            planId = planningContextFacade.generateWeeklyPlan(userId, newWeekStart, adjustment);
+            planId = planningContextFacade.generateWeeklyPlan(userId, newWeekStart, adjustment,
+                    previousAdherence, previousRpe);
         } catch (RuntimeException e) {
             // 19.4: si no hay plan valido la semana queda sin plan y su
             // adherencia sera NULL. Es un dato del estudio, pero no puede tumbar

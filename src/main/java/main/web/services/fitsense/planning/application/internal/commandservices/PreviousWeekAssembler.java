@@ -8,6 +8,7 @@ import main.web.services.fitsense.planning.infrastructure.persistence.jpa.reposi
 import main.web.services.fitsense.planning.infrastructure.persistence.jpa.repositories.WeeklyTrainingPlanRepository;
 import org.springframework.stereotype.Component;
 
+import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -41,7 +42,8 @@ public class PreviousWeekAssembler {
     }
 
     public PreviousWeekSummary assemble(Long userId, LocalDate previousWeekStart,
-                                        int durationToRepsDivisor) {
+                                        int durationToRepsDivisor,
+                                        BigDecimal adherencePct, BigDecimal averageRpe) {
         var plans = planRepository.findByUserIdAndWeekStartDateOrderByPlanVersionAsc(
                 userId, previousWeekStart);
         if (plans.isEmpty()) return PreviousWeekSummary.empty();
@@ -81,7 +83,7 @@ public class PreviousWeekAssembler {
         var usedLast7Days = plannedWorkoutRepository.findExerciseIdsUsedBetween(
                 userId, previousWeekStart, previousWeekStart.plusDays(7));
 
-        return new PreviousWeekSummary(null, null, totalVolume, bodyPartDistribution,
-                List.copyOf(prescriptions), List.copyOf(usedLast7Days));
+        return new PreviousWeekSummary(adherencePct, averageRpe, totalVolume,
+                bodyPartDistribution, List.copyOf(prescriptions), List.copyOf(usedLast7Days));
     }
 }
