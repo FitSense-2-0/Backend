@@ -15,4 +15,11 @@ public interface UserInterventionRepository extends JpaRepository<UserInterventi
     List<UserIntervention> findByUserIdOrderByAppliedAtDesc(Long userId);
 
     Optional<UserIntervention> findFirstByUserIdOrderByAppliedAtDesc(Long userId);
+
+    /**
+     * La intervencion que PRODUJO ese plan. Es la forma exacta de encontrar a
+     * quien le corresponde el resultado de una semana: la adherencia de un plan
+     * puntua a la orden que lo genero, no a la ultima orden que exista.
+     */
+    Optional<UserIntervention> findByResultingPlanId(Long resultingPlanId);
 }

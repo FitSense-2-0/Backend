@@ -99,9 +99,51 @@ public class AdjustmentDecisionTable {
                 : round((targetVolume - context.previousWeekVolume()) * 100.0
                 / context.previousWeekVolume());
 
+        int previous = context.previousWeekVolume();
+        int delta = Math.abs(targetVolume - previous);
         double tolerance = limits.volumeTolerancePct() / 100.0;
-        int min = (int) Math.floor(targetVolume * (1 - tolerance));
-        int max = (int) Math.ceil(targetVolume * (1 + tolerance));
+        int pctSlack = (int) Math.round(targetVolume * tolerance);
+
+        // La banda de 18.4 era simetrica y en porcentaje, pero el volumen solo se
+        // mueve a saltos: con 16 ejercicios a 4 series el paso minimo son 4
+        // unidades, un 0,96 % sobre 416, mientras la tolerancia del 5 % son 21.
+        // Se ordenaba un paso con un margen de diez pasos de ancho, y dentro de
+        // ese margen obedecer y desobedecer eran indistinguibles.
+        //
+        // REGLA 1: el margen no puede ser mas ancho que la mitad del cambio
+        // ordenado, de modo que la banda nunca solapa el volumen previo. Una
+        // orden de subir exige subir. Solo cuando la orden es mantener (delta 0)
+        // se usa la tolerancia en porcentaje: ahi no hay movimiento que exigir y
+        // el generador necesita holgura para cuadrar bloques discretos.
+        int slack = delta == 0 ? pctSlack : Math.max(1, Math.min(pctSlack, delta / 2));
+
+        int min = targetVolume - slack;
+        int max = targetVolume + slack;
+
+        // REGLA 2, direccionalidad: el volumen entregado no puede quedar por
+        // debajo del previo salvo que la orden sea reducir. Cubre el caso de
+        // mantener, donde la regla 1 deja la banda ancha a proposito.
+        //
+        // Observado sin esta regla, con 100 % de adherencia tres semanas
+        // seguidas: 420 -> 416 -> 416 -> 412. El generador entregaba algo menos
+        // de lo ordenado (legal), el volumen caia bajo la linea base, la regla de
+        // recuperacion recortaba el objetivo a la linea base, y esa orden volvia
+        // a ser menor que la tolerancia. Bucle descendente.
+        if (targetVolume >= previous) min = Math.max(min, previous);
+        else max = Math.min(max, previous);
+
+        // REGLA 3: los topes absolutos se aplicaban solo al objetivo, no a la
+        // banda. Con el techo en 431 el maximo aceptado salia 453, un 5 % por
+        // encima del techo declarado: el techo real no era el escrito.
+        min = Math.max(min, absoluteFloor(context, limits));
+        int ceiling = absoluteCeiling(context, limits);
+        if (ceiling != Integer.MAX_VALUE) max = Math.min(max, ceiling);
+
+        // Red de seguridad: el objetivo siempre cae dentro de su propia banda,
+        // aunque los topes la hayan recortado por un lado.
+        min = Math.max(1, Math.min(min, targetVolume));
+        max = Math.max(max, targetVolume);
+        if (max < min) max = min;
 
         var finalTypes = normalize(types);
         return new AdjustmentDecision(finalTypes, targetVolume, min, max, actualChangePct,
@@ -200,15 +242,10 @@ public class AdjustmentDecisionTable {
 
         int baseline = context.baselineWeekVolume();
         if (baseline > 0) {
-            int floor = (int) Math.round(baseline
-                    * (1 - limits.maxCumulativeVolumeReductionPct() / 100.0));
-            target = Math.max(target, floor);
+            target = Math.max(target, absoluteFloor(context, limits));
 
-            double maxIncrease = limits.maxIncreaseOrDefault();
-            if (maxIncrease != Double.MAX_VALUE) {
-                int ceiling = (int) Math.round(baseline * (1 + maxIncrease / 100.0));
-                target = Math.min(target, ceiling);
-            }
+            int ceiling = absoluteCeiling(context, limits);
+            if (ceiling != Integer.MAX_VALUE) target = Math.min(target, ceiling);
 
             // Al recuperar no se pasa de la linea base: la progresion por encima
             // es otra decision, y se toma la semana siguiente.
@@ -216,6 +253,22 @@ public class AdjustmentDecisionTable {
         }
 
         return Math.max(1, target);
+    }
+
+    /** Piso absoluto de 18.4: no se baja del 60 % de la linea base. */
+    private int absoluteFloor(AdjustmentContext context, CalculationParams.Adjustment limits) {
+        int baseline = context.baselineWeekVolume();
+        if (baseline <= 0) return 1;
+        return (int) Math.round(baseline
+                * (1 - limits.maxCumulativeVolumeReductionPct() / 100.0));
+    }
+
+    /** Techo absoluto de 18.4 sobre la linea base. MAX_VALUE si esta desactivado. */
+    private int absoluteCeiling(AdjustmentContext context, CalculationParams.Adjustment limits) {
+        int baseline = context.baselineWeekVolume();
+        double maxIncrease = limits.maxIncreaseOrDefault();
+        if (baseline <= 0 || maxIncrease == Double.MAX_VALUE) return Integer.MAX_VALUE;
+        return (int) Math.round(baseline * (1 + maxIncrease / 100.0));
     }
 
     private Integer shorterSession(AdjustmentContext context, CalculationParams.Adjustment limits,

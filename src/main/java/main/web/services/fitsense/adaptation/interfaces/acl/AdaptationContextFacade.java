@@ -33,13 +33,16 @@ public class AdaptationContextFacade {
     }
 
     @Transactional
-    public void linkResultingPlan(Long interventionId, Long resultingPlanId) {
-        commandService.handle(new LinkResultingPlanCommand(interventionId, resultingPlanId));
+    public void linkResultingPlan(Long interventionId, Long resultingPlanId,
+                                  LocalDate resultingWeekStart) {
+        commandService.handle(new LinkResultingPlanCommand(
+                interventionId, resultingPlanId, resultingWeekStart));
     }
 
     @Transactional
-    public void recordOutcome(Long userId, BigDecimal adherenceAfterPct) {
-        commandService.handle(new RecordInterventionOutcomeCommand(userId, adherenceAfterPct));
+    public void recordOutcome(Long measuredPlanId, BigDecimal adherenceAfterPct) {
+        commandService.handle(new RecordInterventionOutcomeCommand(
+                measuredPlanId, adherenceAfterPct));
     }
 
     private static AdjustmentOrderView toView(UserInterventionCommandService.AdjustmentResult result) {

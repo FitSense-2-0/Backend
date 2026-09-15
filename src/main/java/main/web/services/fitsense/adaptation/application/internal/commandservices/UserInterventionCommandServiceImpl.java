@@ -18,7 +18,6 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.time.LocalDate;
 import java.util.Optional;
 
 @Service
@@ -140,19 +139,43 @@ public class UserInterventionCommandServiceImpl implements UserInterventionComma
         var configuration = externalConfigurationService.fetchActive();
         int divisor = configuration.params().adjustment().durationToRepsDivisor();
 
-        var newWeek = TrainingWeek.containing(LocalDate.now());
+        // El volumen se lee de la semana del plan que se esta enlazando, no de la
+        // semana que contiene la fecha de hoy. No son la misma cuando el ciclo
+        // corre con retraso o se relanza despues de un fallo de generacion, y en
+        // ese caso resulting_week_volume y actual_volume_change_pct quedaban con
+        // el numero de otra semana.
         int resultingVolume = externalPlanningService.weekVolume(
-                intervention.getUserId(), newWeek.startDate(), divisor);
+                intervention.getUserId(), command.resultingWeekStart(), divisor);
 
         intervention.linkResultingPlan(command.resultingPlanId(), resultingVolume);
         return Optional.of(interventionRepository.save(intervention));
     }
 
-    /** Paso 4 de la tarea semanal: evalua la intervencion de la semana anterior. */
+    /**
+     * Paso 3 de la tarea semanal: evalua la intervencion que PRODUJO el plan
+     * medido.
+     * <p>
+     * Antes se buscaba "la ultima intervencion del participante" por fecha de
+     * aplicacion. Mientras no falla nada coinciden, pero basta una semana sin
+     * plan para que no se cree intervencion, y entonces la ultima sigue siendo
+     * la de dos semanas atras: la adherencia recien medida se escribia encima de
+     * una orden que no la produjo, sobrescribiendo su resultado anterior.
+     * <p>
+     * Eso corrompia adherence_after_pct, que es justamente la medida de si la
+     * adaptacion funciono. La correccion del rollback (problema 13) aumenta la
+     * exposicion a este fallo, porque ahora el ciclo sobrevive al fallo de
+     * generacion y sigue adelante dejando la semana sin intervencion.
+     * <p>
+     * Buscar por resulting_plan_id responde la pregunta correcta: la adherencia
+     * de un plan puntua a la orden que genero ese plan. Si esa orden no existe,
+     * no se puntua nada, y un nulo honesto vale mas que un numero ajeno.
+     */
     @Override
     @Transactional
     public void handle(RecordInterventionOutcomeCommand command) {
-        interventionRepository.findFirstByUserIdOrderByAppliedAtDesc(command.userId())
+        if (command.measuredPlanId() == null) return;
+
+        interventionRepository.findByResultingPlanId(command.measuredPlanId())
                 .ifPresent(intervention -> {
                     var tolerance = externalConfigurationService.fetchActive()
                             .params().adjustment().volumeTolerancePct();

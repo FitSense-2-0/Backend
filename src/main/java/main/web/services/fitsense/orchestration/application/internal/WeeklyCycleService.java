@@ -69,7 +69,7 @@ public class WeeklyCycleService {
         //    nueva: la adherencia recien calculada es justamente el resultado
         //    del ajuste que se aplico la semana pasada.
         metrics.ifPresent(view ->
-                adaptationContextFacade.recordOutcome(userId, view.weightedAdherencePct()));
+                adaptationContextFacade.recordOutcome(view.planId(), view.weightedAdherencePct()));
 
         // 4. Decidir. Vacio en la primera semana o si no hubo plan.
         var order = adaptationContextFacade.decideForWeek(userId, measuredWeekStart);
@@ -95,7 +95,7 @@ public class WeeklyCycleService {
         }
 
         order.ifPresent(view -> planId.ifPresent(
-                id -> adaptationContextFacade.linkResultingPlan(view.interventionId(), id)));
+                id -> adaptationContextFacade.linkResultingPlan(view.interventionId(), id, newWeekStart)));
 
         return planId;
     }
