@@ -119,14 +119,29 @@ public class PlanningContextFacade {
 
     /** Genera el plan de la semana nueva con el ajuste ya decidido. */
     /** Genera el plan de la semana nueva con el ajuste ya decidido. */
-    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    /**
+     * Genera el plan de la semana nueva con el ajuste ya decidido.
+     * <p>
+     * SIN @Transactional, deliberadamente. Coordina tres fases y solo la primera
+     * y la tercera abren transaccion; la del medio hace hasta dos llamadas HTTP
+     * de ~90 s. Poner una transaccion aqui volveria a meter esa espera dentro de
+     * una conexion de base de datos, que es lo que provocaba que Postgres la
+     * terminara por idle-in-transaction y se perdieran las metricas del ciclo.
+     * <p>
+     * Tampoco hace falta ya REQUIRES_NEW: al no existir transaccion abarcando la
+     * generacion, un fallo suyo no puede marcar como rollback-only la del ciclo
+     * semanal.
+     */
     public Optional<Long> generateWeeklyPlan(Long userId, LocalDate weekStartDate,
                                              PlanAdjustment adjustment,
                                              BigDecimal previousAdherencePct,
                                              BigDecimal previousAverageRpe) {
-        return commandService.handle(new GenerateWeeklyPlanCommand(
-                        userId, weekStartDate, adjustment, false,
-                        previousAdherencePct, previousAverageRpe))
+        var command = new GenerateWeeklyPlanCommand(userId, weekStartDate, adjustment, false,
+                previousAdherencePct, previousAverageRpe);
+
+        var prepared = commandService.prepare(command);
+        var generated = commandService.generate(prepared);
+        return commandService.persist(prepared, generated)
                 .map(WeeklyTrainingPlan::getId);
     }
 

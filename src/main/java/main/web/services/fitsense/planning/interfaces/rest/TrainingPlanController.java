@@ -67,6 +67,12 @@ public class TrainingPlanController {
      * Primera semana. En produccion las siguientes las genera la tarea del lunes;
      * este endpoint falla si ya hay un plan activo en vez de crear un segundo,
      * porque dos planes activos dejarian la semana con dos denominadores.
+     * <p>
+     * La generacion va en tres fases y el controlador NO es transaccional, a
+     * proposito: la fase del medio hace hasta dos llamadas HTTP de ~90 s al
+     * proveedor del modelo. Encerrarlas en una transaccion hace que Postgres
+     * termine la conexion por idle-in-transaction y se pierda lo ya escrito.
+     * Las transacciones viven dentro de prepare() y persist(), que son cortas.
      */
     @PostMapping("/users/me/plan/generate")
     @Operation(summary = "Genera el plan de esta semana. Falla si ya existe uno activo.")
@@ -74,7 +80,12 @@ public class TrainingPlanController {
             @AuthenticationPrincipal UserDetailsImpl principal) {
 
         var monday = TrainingWeek.containing(LocalDate.now()).startDate();
-        return commandService.handle(GenerateWeeklyPlanCommand.firstPlan(principal.getUserId(), monday))
+        var command = GenerateWeeklyPlanCommand.firstPlan(principal.getUserId(), monday);
+
+        var prepared = commandService.prepare(command);
+        var generated = commandService.generate(prepared);
+
+        return commandService.persist(prepared, generated)
                 .map(this::toResource)
                 .map(created -> ResponseEntity.status(HttpStatus.CREATED).body(created))
                 .orElseGet(() -> ResponseEntity.badRequest().build());

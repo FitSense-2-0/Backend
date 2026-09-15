@@ -57,9 +57,14 @@ public class WeeklyTrainingPlanCommandServiceImpl implements WeeklyTrainingPlanC
         this.jsonSupport = jsonSupport;
     }
 
+    /**
+     * FASE 1. Todo lo que hay que leer para poder generar: elegibilidad, perfil,
+     * conjunto de ejercicios, semana previa y configuracion. Son consultas:
+     * milisegundos.
+     */
     @Override
-    @Transactional
-    public Optional<WeeklyTrainingPlan> handle(GenerateWeeklyPlanCommand command) {
+    @Transactional(readOnly = true)
+    public PreparedPlanGeneration prepare(GenerateWeeklyPlanCommand command) {
         if (!externalIamService.isEligibleForPlanGeneration(command.userId()))
             throw new DomainRuleViolationException(
                     "El usuario %d no esta activo en el estudio: no se le generan planes."
@@ -104,19 +109,62 @@ public class WeeklyTrainingPlanCommandServiceImpl implements WeeklyTrainingPlanC
                 week.startDate(), week.endDate(), profile, adjustment, previousWeek,
                 eligible, safety, externalConfigurationService.prescriptionParams());
 
-        var result = pipeline.run(context, divisor);
-        var draft = result.draft();
+        return new PreparedPlanGeneration(command, context, adjustment,
+                week.startDate(), week.endDate(), divisor, weekNumber,
+                previousActive.map(WeeklyTrainingPlan::getId).orElse(null),
+                externalIamService.timezoneOf(command.userId()));
+    }
 
-        var snapshotJson = jsonSupport.write(PlanInputSnapshot.of(context));
-        var zone = externalIamService.timezoneOf(command.userId());
+    /**
+     * FASE 2. SIN @Transactional, y no es un olvido.
+     * <p>
+     * pipeline.run hace hasta dos llamadas HTTP a Replicate de ~90 s cada una y
+     * no toca la base de datos. Dentro de una transaccion, esos minutos cuentan
+     * como idle-in-transaction: Postgres termina la conexion y se pierde todo lo
+     * escrito antes en ella, incluidos el cierre de semana y las metricas. Con
+     * 30 participantes agota ademas el pool de HikariCP, que por defecto son 10
+     * conexiones, y la tarea semanal falla en cascada.
+     * <p>
+     * Que el metodo viva aqui y no dentro del pipeline es deliberado: asi la
+     * frontera transaccional de la generacion queda visible en un solo archivo.
+     */
+    @Override
+    public GeneratedPlan generate(PreparedPlanGeneration prepared) {
+        var result = pipeline.run(prepared.context(), prepared.divisor());
+        return new GeneratedPlan(result.draft(), result.attempts());
+    }
+
+    /**
+     * FASE 3. Materializa el borrador y lo guarda. Transaccional y corta.
+     */
+    @Override
+    @Transactional
+    public Optional<WeeklyTrainingPlan> persist(PreparedPlanGeneration prepared,
+                                                GeneratedPlan generated) {
+        var command = prepared.command();
+        var draft = generated.draft();
+        var adjustment = prepared.adjustment();
+
+        // Se relee el plan previo en vez de arrastrar la entidad de la fase 1:
+        // entre fase y fase pasaron ~90 s sin sesion de persistencia abierta. Y
+        // se vuelve a comprobar la precondicion, porque en ese hueco pudo
+        // aparecer un plan activo que en la fase 1 no existia.
+        var previousActive = planRepository.findByUserIdAndWeekStartDateAndStatus(
+                command.userId(), prepared.weekStartDate(), PlanStatus.ACTIVE);
+
+        if (previousActive.isPresent() && !command.replaceExisting())
+            throw new PlanAlreadyExistsException(command.userId(), prepared.weekStartDate());
+
+        var snapshotJson = jsonSupport.write(PlanInputSnapshot.of(prepared.context()));
 
         var plan = previousActive
                 .map(previous -> WeeklyTrainingPlan.nextVersionOf(previous, draft.source(),
-                        draft.modelName(), snapshotJson, result.attempts(),
+                        draft.modelName(), snapshotJson, generated.attempts(),
                         adjustment.types().get(0).name(), draft.rationale()))
-                .orElseGet(() -> WeeklyTrainingPlan.firstVersion(command.userId(), weekNumber,
-                        week.startDate(), week.endDate(), draft.source(), draft.modelName(),
-                        snapshotJson, result.attempts()));
+                .orElseGet(() -> WeeklyTrainingPlan.firstVersion(command.userId(),
+                        prepared.weekNumber(), prepared.weekStartDate(), prepared.weekEndDate(),
+                        draft.source(), draft.modelName(), snapshotJson, generated.attempts()));
+
         // firstVersion no recibe el ajuste porque una primera version normalmente
         // no lo tiene. Pero la semana nueva del lunes SI llega con orden y sin
         // plan previo que reemplazar, asi que entraba por esa rama y los dos
@@ -127,7 +175,7 @@ public class WeeklyTrainingPlanCommandServiceImpl implements WeeklyTrainingPlanC
         if (adjustment.isActive())
             plan.recordAdjustment(adjustment.types().get(0).name(), draft.rationale());
 
-        materialize(plan, draft, zone);
+        materialize(plan, draft, prepared.zone());
         plan.attachOutputSnapshot(jsonSupport.write(draft));
 
         // Reemplazar y vaciar el contexto ANTES de guardar el nuevo:
@@ -139,7 +187,7 @@ public class WeeklyTrainingPlanCommandServiceImpl implements WeeklyTrainingPlanC
 
         var saved = planRepository.save(plan);
         log.info("Plan {} generado para el usuario {} por {} en {} intento(s)",
-                saved.getId(), command.userId(), draft.source(), result.attempts());
+                saved.getId(), command.userId(), draft.source(), generated.attempts());
         return Optional.of(saved);
     }
 

@@ -51,13 +51,16 @@ public class WeeklyCycleService {
     /**
      * Ejecuta el ciclo semanal de un participante.
      * <p>
-     * noRollbackFor: la generacion del plan puede fallar legitimamente (19.4) y
-     * ese fallo NO debe deshacer el cierre de semana ni las metricas, que ya se
-     * calcularon bien. Sin esto, capturar la excepcion no basta: Spring marca la
-     * transaccion como rollback-only y revienta al hacer commit con
-     * UnexpectedRollbackException, perdiendo tambien lo que si funciono.
+     * SIN @Transactional, deliberadamente. Cada paso llama a un facade que abre
+     * su propia transaccion corta, asi que la atomicidad por paso ya esta
+     * garantizada. Una transaccion abarcando el ciclo entero mantendria la
+     * conexion abierta durante los ~90 s que tarda la generacion, y Postgres la
+     * termina por idle-in-transaction llevandose el cierre de semana y las
+     * metricas ya escritas.
+     * <p>
+     * El noRollbackFor que habia aqui trataba el sintoma: si no hay transaccion
+     * abarcando, no hay nada que marcar como rollback-only.
      */
-    @Transactional(noRollbackFor = RuntimeException.class)
     public Optional<Long> runFor(Long userId, LocalDate measuredWeekStart, LocalDate newWeekStart) {
         // 1. Cerrar. El plan deja de admitir sesiones nuevas.
         planningContextFacade.closeWeek(userId, measuredWeekStart);
