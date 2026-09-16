@@ -9,13 +9,15 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 
 /**
  * Unico punto de entrada a execution desde otros contextos. Lo consume analytics
  * para armar el numerador de la adherencia y para saber cuantos dias lleva el
- * participante sin entrenar.
+ * participante sin entrenar, y planning para darle al generador el desempeno
+ * real de la semana anterior.
  */
 @Service
 public class ExecutionContextFacade {
@@ -46,10 +48,45 @@ public class ExecutionContextFacade {
                 .toList();
     }
 
+    /**
+     * Desempeno por ejercicio de los entrenamientos indicados, solo el intento
+     * que cuenta. Un entrenamiento sin sesion que cuente no aparece: para el
+     * generador "no se registro" y "se hizo al 0 %" son cosas distintas, y la
+     * ausencia es la que lo distingue.
+     */
+    @Transactional(readOnly = true)
+    public List<WorkoutResultView> fetchCountedResults(Collection<Long> plannedWorkoutIds) {
+        if (plannedWorkoutIds == null || plannedWorkoutIds.isEmpty()) return List.of();
+        return sessionRepository.findByPlannedWorkoutIdInAndCountsTowardAdherenceTrue(plannedWorkoutIds)
+                .stream()
+                .map(ExecutionContextFacade::toResultView)
+                .toList();
+    }
+
     /** Ultima sesion que conto, en cualquier semana. Base de days_since_last_workout. */
     @Transactional(readOnly = true)
     public Optional<OffsetDateTime> fetchLastCountedSessionAt(Long userId) {
         return sessionRepository.findLastCountedSessionDate(userId);
+    }
+
+    private static WorkoutResultView toResultView(WorkoutSession session) {
+        var exercises = session.exercisesView().stream()
+                .map(exercise -> new WorkoutResultView.ExerciseResult(
+                        exercise.getPlannedExerciseId(),
+                        exercise.getActualSets(),
+                        exercise.getActualRepsTotal(),
+                        exercise.getActualDurationSeconds(),
+                        exercise.getActualLoadKg(),
+                        exercise.getCompletionPercentage(),
+                        exercise.getStatus() == null ? null : exercise.getStatus().name(),
+                        exercise.getSkipReason() == null ? null : exercise.getSkipReason().name()))
+                .toList();
+        return new WorkoutResultView(
+                session.getPlannedWorkoutId(),
+                session.getStatus().name(),
+                session.getSessionRpe(),
+                session.getCompletionPercentage(),
+                exercises);
     }
 
     private static SessionSummaryView toView(WorkoutSession session, int durationToRepsDivisor) {

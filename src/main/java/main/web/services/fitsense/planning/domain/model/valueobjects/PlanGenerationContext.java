@@ -24,7 +24,21 @@ public record PlanGenerationContext(
         SafetyProfile safety,
         PrescriptionParams prescription
 ) {
-    public static final String SCHEMA_VERSION = "GEN-IN-1.0";
+    /**
+     * GEN-IN-1.1 (V18, principios P-1.0): input_snapshot suma principles_version,
+     * user.equipment_codes y available_exercises[].prescription_type, y cambia
+     * constraints.rep_range (por objetivo) por constraints.rep_limits (amplio).
+     * <p>
+     * GEN-IN-1.2 (principios P-1.1): previous_week pasa de una lista plana de lo
+     * prescrito a workouts[] por dia, con RPE de la sesion, y exercises[] con lo
+     * prescrito y lo hecho (actual_*, completion_pct, exercise_status,
+     * skip_reason).
+     * <p>
+     * P-1.2 no cambia el formato: solo el texto de principios y V11.
+     * <p>
+     * Los snapshots antiguos siguen siendo legibles con su version.
+     */
+    public static final String SCHEMA_VERSION = "GEN-IN-1.2";
 
     /**
      * Dificultad maxima efectiva: la del perfil, salvo que el ajuste ordene

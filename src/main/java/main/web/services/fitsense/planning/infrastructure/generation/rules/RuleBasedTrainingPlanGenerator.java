@@ -157,11 +157,18 @@ public class RuleBasedTrainingPlanGenerator implements TrainingPlanGenerator {
                     DURATION_SETS, null, DURATION_SECONDS, null, DURATION_REST_SECONDS, null);
         }
 
-        // LOWER_LOAD deja target_load_kg en NULL y el usuario elige su peso
-        // (20.5). El motor de reglas nunca prescribe carga: no tiene forma de
-        // saber cuanto levanta el participante.
+        // Peso SUGERIDO (principio 8, P-1.2): el motor de reglas copia el ultimo
+        // peso que anoto la persona y nunca lo sube. Asi no pierde la referencia
+        // aunque la IA falle. Sin peso anotado, o con LOWER_LOAD, va null y el
+        // usuario elige su peso (20.5). No es una medida: solo una sugerencia.
+        boolean lowerLoad = context.adjustment() != null && context.adjustment().clearsLoad();
+        var suggestedLoad = lowerLoad || context.previousWeek() == null ? null
+                : context.previousWeek().lastLoadFor(candidate.exerciseId())
+                .map(PreviousWeekSummary.LoadReference::loadKg)
+                .orElse(null);
+
         return new PlanDraft.DraftExercise(candidate.exerciseId(), PrescriptionType.SETS_REPS,
-                prescription.sets(), prescription.reps(), null, null,
+                prescription.sets(), prescription.reps(), null, suggestedLoad,
                 prescription.restSeconds(), null);
     }
 

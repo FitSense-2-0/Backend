@@ -36,15 +36,19 @@ public class PlanPromptBuilder {
                 4.  expected_duration_minutes no puede superar session_minutes mas 15 %.
                 5.  Cada entrenamiento lleva al menos 2 ejercicios.
                 6.  Ningun ejercicio puede superar max_difficulty_level.
-                7.  prescription_type SETS_REPS exige planned_sets y planned_reps.
-                    prescription_type DURATION exige planned_duration_seconds.
+                7.  Usa el prescription_type que trae cada ejercicio en
+                    available_exercises; el backend rechaza otro distinto.
+                    SETS_REPS exige planned_sets y planned_reps.
+                    DURATION exige planned_duration_seconds.
                 8.  Si hay adjustment, la suma de volumen debe caer entre target_volume_min
                     y target_volume_max. Volumen = planned_sets x planned_reps, o
                     planned_duration_seconds x planned_sets / 30 para los de duracion.
                     La carga NO cuenta como volumen.
                 9.  Minimo 2 series y 6 repeticiones por ejercicio.
                 10. Minimo 20 segundos en los ejercicios de duracion.
-                11. Si adjustment.types incluye LOWER_LOAD, deja target_load_kg en null.
+                11. target_load_kg sigue el principio 8. Sin peso anotado la semana
+                    anterior va en null; nunca sube mas de un 10 % sobre el peso
+                    usado, y solo si hizo todas las repeticiones.
                 12. No pongas dos entrenamientos el mismo dia.
                 13. No repitas el mismo focus_code en dias consecutivos.
                 14. Si safety_notes no es null, respetalo al prescribir.
@@ -53,17 +57,16 @@ public class PlanPromptBuilder {
                     rango de movimiento, menos series, mas descanso.
                 15. Cada entrenamiento debe CUBRIR su enfoque, no repetir zona.
                     Un FULL_BODY con seis ejercicios de biceps no es cuerpo
-                    completo. Cubre al menos 3 body_part distintos de los que el
-                    enfoque admite, y que ningun grupo se lleve mas de la mitad
-                    de la sesion.
-                16. Respeta el objetivo del participante al prescribir. El rango
-                    permitido viene en constraints.rep_range: ningun
-                    planned_reps puede quedar por debajo de min_reps ni por
-                    encima de max_reps, y el backend lo verifica. Recuerda que
-                    la regla 9 impone ademas un minimo absoluto de 6, asi que el
-                    rango efectivo empieza en el mayor de los dos. Varia dentro
-                    del rango entre ejercicios: un accesorio admite mas
-                    repeticiones que un basico.
+                    completo. Cubre al menos 2 body_part distintos de los que el
+                    enfoque admite (3 si la sesion lo permite), y que ningun
+                    grupo se lleve mas de la mitad de la sesion.
+                16. Las repeticiones las decides tu, ejercicio por ejercicio,
+                    con los PRINCIPIOS DE PRESCRIPCION de mas abajo. El backend
+                    solo verifica el limite de constraints.rep_limits: ningun
+                    planned_reps por debajo de min_reps ni por encima de
+                    max_reps. Ese limite NO es un objetivo ni una sugerencia:
+                    es solo el borde de lo absurdo. No uses sus extremos por
+                    defecto.
                 17. expected_duration_minutes debe corresponder al contenido
                     real, no a session_minutes. El backend lo recalcula asi y
                     rechaza un desvio mayor al 20 %:
@@ -102,6 +105,12 @@ public class PlanPromptBuilder {
                 rationale se le muestra al usuario para explicarle el cambio: escribelo en
                 espanol, en segunda persona, breve y concreto.
                 """);
+
+        // Los principios van despues de las reglas verificables y antes de los
+        // datos: primero lo que invalida el plan, luego el criterio para elegir
+        // dentro de lo valido. El texto y su version viven en
+        // PrescriptionPrinciples; la version queda en input_snapshot.
+        prompt.append('\n').append(PrescriptionPrinciples.TEXT);
 
         if (!previousProblems.isEmpty()) {
             // Segundo intento: la lista de incumplimientos es lo unico que

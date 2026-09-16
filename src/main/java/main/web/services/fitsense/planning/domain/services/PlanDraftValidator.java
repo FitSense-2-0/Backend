@@ -65,9 +65,22 @@ public class PlanDraftValidator {
                     if (candidate == null)
                         problems.add("V1: el ejercicio %d no esta en available_exercises."
                                 .formatted(exercise.exerciseId()));
-                    else if (candidate.difficulty() > maxDifficulty)
-                        problems.add("V6: el ejercicio %d tiene dificultad %d y el maximo es %d."
-                                .formatted(exercise.exerciseId(), candidate.difficulty(), maxDifficulty));
+                    else {
+                        if (candidate.difficulty() > maxDifficulty)
+                            problems.add("V6: el ejercicio %d tiene dificultad %d y el maximo es %d."
+                                    .formatted(exercise.exerciseId(), candidate.difficulty(), maxDifficulty));
+
+                        // 7 (V18, principio 7): el tipo lo fija el catalogo, no
+                        // el generador. Sin esto llegaron un estiramiento a 3x7
+                        // y un planche a 2x60 s. El motor de reglas cumple por
+                        // construccion: copia defaultPrescription.
+                        if (exercise.prescriptionType() != null
+                                && candidate.defaultPrescription() != null
+                                && exercise.prescriptionType() != candidate.defaultPrescription())
+                            problems.add("V7: el ejercicio %d se prescribio como %s y debe ir como %s."
+                                    .formatted(exercise.exerciseId(), exercise.prescriptionType(),
+                                            candidate.defaultPrescription()));
+                    }
                 });
 
         // 2: la cantidad de dias coincide con days_per_week.
@@ -288,34 +301,83 @@ public class PlanDraftValidator {
     }
 
     /**
-     * Validacion 11: si el ajuste incluye LOWER_LOAD, ninguna target_load_kg
-     * puede superar la de la semana anterior para el mismo ejercicio.
+     * Validacion 11 (principio 8, P-1.2): el peso SUGERIDO.
+     * <p>
+     * target_load_kg es solo una sugerencia para el participante. No entra en la
+     * adherencia, el volumen ni el analisis: esta validacion existe para que la
+     * sugerencia sea segura, no porque el peso se mida.
+     * <ul>
+     *   <li>Sin peso anotado la semana anterior, va null: sin dato real, un kilo
+     *       prescrito es falsa precision.</li>
+     *   <li>Mantener o bajar el peso usado: siempre permitido.</li>
+     *   <li>Subir: solo si hizo TODAS las repeticiones, como maximo
+     *       max_load_increase_pct (10 %, ACSM 2009), y sin subir series ni
+     *       repeticiones de ese ejercicio.</li>
+     *   <li>LOWER_LOAD: ningun peso puede superar el usado.</li>
+     *   <li>Ejercicios por duracion: sin peso.</li>
+     * </ul>
+     * El RPE NO se valida aqui: la escala no esta instrumentada y queda como
+     * instruccion al modelo.
      */
     private void validateLoads(PlanDraft draft, PlanGenerationContext context,
                                List<String> problems) {
-        if (context.adjustment() == null || !context.adjustment().clearsLoad()) return;
-
-        var previousLoads = context.previousWeek().prescriptions().stream()
-                .filter(prescription -> prescription.loadKg() != null)
-                .collect(Collectors.toMap(
-                        PreviousWeekSummary.PrescriptionOutcome::exerciseId,
-                        PreviousWeekSummary.PrescriptionOutcome::loadKg,
-                        (a, b) -> a.max(b)));
+        var previousWeek = context.previousWeek();
+        boolean lowerLoad = context.adjustment() != null && context.adjustment().clearsLoad();
+        int maxIncreasePct = context.prescription() == null ? 10
+                : context.prescription().maxLoadIncreasePctOrDefault();
 
         draft.workouts().stream()
                 .flatMap(workout -> workout.exercises().stream())
                 .filter(exercise -> exercise.targetLoadKg() != null)
                 .forEach(exercise -> {
-                    BigDecimal previous = previousLoads.get(exercise.exerciseId());
-                    if (previous != null && exercise.targetLoadKg().compareTo(previous) > 0)
+                    long id = exercise.exerciseId();
+                    BigDecimal target = exercise.targetLoadKg();
+
+                    if (exercise.prescriptionType() == PrescriptionType.DURATION) {
+                        problems.add("V11: el ejercicio %d es por duracion y no lleva peso.".formatted(id));
+                        return;
+                    }
+
+                    var reference = previousWeek == null ? Optional.<PreviousWeekSummary.LoadReference>empty()
+                            : previousWeek.lastLoadFor(id);
+                    if (reference.isEmpty()) {
+                        problems.add(("V11: el ejercicio %d sugiere %s kg y la persona no anoto peso "
+                                + "la semana anterior; debe ir en null.").formatted(id, target));
+                        return;
+                    }
+
+                    BigDecimal used = reference.get().loadKg();
+                    if (target.compareTo(used) <= 0) return;
+
+                    if (lowerLoad) {
                         problems.add("V11: el ajuste pide bajar carga y el ejercicio %d sube de %s a %s kg."
-                                .formatted(exercise.exerciseId(), previous, exercise.targetLoadKg()));
+                                .formatted(id, used, target));
+                        return;
+                    }
+                    if (!reference.get().fullyCompleted())
+                        problems.add(("V11: el ejercicio %d sube de %s a %s kg y la semana anterior no "
+                                + "hizo todas las repeticiones.").formatted(id, used, target));
+
+                    BigDecimal ceiling = used.multiply(BigDecimal.valueOf(100 + maxIncreasePct))
+                            .divide(BigDecimal.valueOf(100), 2, java.math.RoundingMode.HALF_UP);
+                    if (target.compareTo(ceiling) > 0)
+                        problems.add("V11: el ejercicio %d sube de %s a %s kg; el maximo es %s kg (+%d %%)."
+                                .formatted(id, used, target, ceiling, maxIncreasePct));
+
+                    boolean moreSets = exercise.plannedSets() != null && reference.get().sets() != null
+                            && exercise.plannedSets() > reference.get().sets();
+                    boolean moreReps = exercise.plannedReps() != null && reference.get().reps() != null
+                            && exercise.plannedReps() > reference.get().reps();
+                    if (moreSets || moreReps)
+                        problems.add(("V11: el ejercicio %d sube el peso y tambien series o repeticiones; "
+                                + "solo puede subir una cosa a la vez.").formatted(id));
                 });
     }
 
     /**
-     * Validaciones 16 y 17: la prescripcion debe corresponder al objetivo, y la
-     * duracion declarada debe corresponder al contenido.
+     * Validaciones 16 y 17: las repeticiones deben caer en el limite amplio de
+     * P-1.0 (antes, en el rango del objetivo), y la duracion declarada debe
+     * corresponder al contenido.
      * <p>
      * V17 CAMBIO RESPECTO AL §19.3. Antes exigia que la duracion declarada no
      * bajara del 70 % de session_minutes. Esa regla castigaba al generador que
@@ -344,8 +406,29 @@ public class PlanDraftValidator {
         var prescription = context.prescription();
         if (prescription == null) return;
 
-        // 16: repeticiones dentro del rango del objetivo.
-        var rango = prescription.forGoal(context.profile().goalType());
+        // 16 (V18, principios P-1.0): limite amplio por ejercicio. Las
+        // repeticiones las decide el generador; aqui solo se rechaza lo absurdo.
+        // Ya no hay rango por objetivo: 15 elevaciones de talon para un perfil
+        // de fuerza son coherentes y el rango 4-10 las rechazaba.
+        var limites = prescription.repLimits();
+        if (limites != null && limites.isComplete()) {
+            draft.workouts().stream()
+                    .flatMap(workout -> workout.exercises().stream())
+                    .filter(exercise -> exercise.prescriptionType() == PrescriptionType.SETS_REPS)
+                    .filter(exercise -> exercise.plannedReps() != null)
+                    .forEach(exercise -> {
+                        int reps = exercise.plannedReps();
+                        if (reps < limites.minReps() || reps > limites.maxReps())
+                            problems.add("V16: el ejercicio %d lleva %d repeticiones y el limite es de %d a %d."
+                                    .formatted(exercise.exerciseId(), reps,
+                                            limites.minReps(), limites.maxReps()));
+                    });
+        }
+
+        // 16 antiguo: rango por objetivo. Solo aplica con configuraciones
+        // anteriores a MVP-1.5, para revalidar planes historicos con sus reglas.
+        var rango = limites != null && limites.isComplete() ? null
+                : prescription.forGoal(context.profile().goalType());
         if (rango != null && rango.minReps() != null && rango.maxReps() != null) {
             draft.workouts().stream()
                     .flatMap(workout -> workout.exercises().stream())

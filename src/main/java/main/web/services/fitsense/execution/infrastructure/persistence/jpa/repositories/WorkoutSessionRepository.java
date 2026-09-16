@@ -8,6 +8,7 @@ import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
 import java.time.OffsetDateTime;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 
@@ -24,6 +25,15 @@ public interface WorkoutSessionRepository extends JpaRepository<WorkoutSession, 
 
     /** Intentos previos que aun cuentan: hay que desplazarlos antes de que cuente el nuevo. */
     List<WorkoutSession> findByPlannedWorkoutIdAndCountsTowardAdherenceTrue(Long plannedWorkoutId);
+
+    /**
+     * El intento que cuenta de cada entrenamiento de un plan. Base del
+     * desempeno previo que recibe el generador: se busca por entrenamiento y no
+     * por fecha, porque un reporte retroactivo puede registrarse dias despues
+     * del entrenamiento al que pertenece.
+     */
+    List<WorkoutSession> findByPlannedWorkoutIdInAndCountsTowardAdherenceTrue(
+            Collection<Long> plannedWorkoutIds);
 
     @Query("SELECT COALESCE(MAX(s.attemptNumber), 0) FROM WorkoutSession s "
             + "WHERE s.plannedWorkoutId = :plannedWorkoutId")
