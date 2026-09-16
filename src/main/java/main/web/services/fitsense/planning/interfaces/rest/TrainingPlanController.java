@@ -14,6 +14,8 @@ import main.web.services.fitsense.planning.domain.model.queries.GetPlanByIdQuery
 import main.web.services.fitsense.planning.domain.model.queries.GetPlanHistoryQuery;
 import main.web.services.fitsense.planning.domain.services.WeeklyTrainingPlanCommandService;
 import main.web.services.fitsense.planning.domain.services.WeeklyTrainingPlanQueryService;
+import main.web.services.fitsense.planning.domain.model.valueobjects.EffortGuidance;
+import main.web.services.fitsense.shared.infrastructure.json.JsonSupport;
 import main.web.services.fitsense.planning.interfaces.rest.resources.PlanSummaryResource;
 import main.web.services.fitsense.planning.interfaces.rest.resources.SkipWorkoutResource;
 import main.web.services.fitsense.planning.interfaces.rest.resources.WeeklyTrainingPlanResource;
@@ -43,13 +45,16 @@ public class TrainingPlanController {
     private final WeeklyTrainingPlanQueryService queryService;
     private final WeeklyTrainingPlanCommandService commandService;
     private final ExternalCatalogService externalCatalogService;
+    private final JsonSupport jsonSupport;
 
     public TrainingPlanController(WeeklyTrainingPlanQueryService queryService,
                                   WeeklyTrainingPlanCommandService commandService,
-                                  ExternalCatalogService externalCatalogService) {
+                                  ExternalCatalogService externalCatalogService,
+                                  JsonSupport jsonSupport) {
         this.queryService = queryService;
         this.commandService = commandService;
         this.externalCatalogService = externalCatalogService;
+        this.jsonSupport = jsonSupport;
     }
 
     @GetMapping("/users/me/plan/current")
@@ -135,6 +140,27 @@ public class TrainingPlanController {
         // fetchDetails y no fetchNames: la app necesita el gif y la atribucion
         // para pintar la pantalla del ejercicio sin una llamada por cada uno.
         return WeeklyTrainingPlanResourceFromEntityAssembler.toResourceFromEntity(
-                plan, externalCatalogService.fetchDetails(exerciseIds));
+                plan, externalCatalogService.fetchDetails(exerciseIds),
+                EffortGuidance.forLevel(fitnessLevelOf(plan)));
+    }
+
+    /**
+     * El nivel con el que SE GENERO el plan, leido de input_snapshot, y no el
+     * nivel actual del perfil: la indicacion debe corresponder a lo que recibio
+     * la IA al prescribir. Si el snapshot no se puede leer, cae a la regla
+     * general (2-3 en reserva) en vez de romper la pantalla del plan.
+     */
+    private String fitnessLevelOf(WeeklyTrainingPlan plan) {
+        try {
+            var snapshot = jsonSupport.read(plan.getInputSnapshot(), SnapshotLevel.class);
+            return snapshot == null || snapshot.user() == null ? null : snapshot.user().fitnessLevel();
+        } catch (RuntimeException e) {
+            return null;
+        }
+    }
+
+    /** Solo lo que hace falta de input_snapshot. JsonSupport ignora el resto. */
+    public record SnapshotLevel(SnapshotUser user) {
+        public record SnapshotUser(String fitnessLevel) {}
     }
 }

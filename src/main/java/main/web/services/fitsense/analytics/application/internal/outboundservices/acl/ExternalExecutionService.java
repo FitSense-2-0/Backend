@@ -1,23 +1,15 @@
-package main.web.services.fitsense.planning.application.internal.outboundservices.acl;
+package main.web.services.fitsense.analytics.application.internal.outboundservices.acl;
 
+import main.web.services.fitsense.analytics.domain.model.valueobjects.WeekSessionInput;
 import main.web.services.fitsense.execution.interfaces.acl.ExecutionContextFacade;
-import main.web.services.fitsense.execution.interfaces.acl.WorkoutResultView;
 import org.springframework.stereotype.Service;
 
-import java.util.Collection;
-import java.util.Map;
-import java.util.function.Function;
-import java.util.stream.Collectors;
+import java.time.LocalDate;
+import java.time.temporal.ChronoUnit;
+import java.util.List;
 
-/**
- * Capa anticorrupcion hacia execution: lo que la persona hizo la semana
- * anterior, para que el generador ajuste con datos reales y no solo con lo que
- * se le pidio.
- * <p>
- * Nombre de bean explicito: analytics ya tiene un ExternalExecutionService y
- * dos beans con el mismo nombre por defecto impiden arrancar la aplicacion.
- */
-@Service("planningExternalExecutionService")
+/** Capa anticorrupcion hacia execution: el numerador de la semana. */
+@Service("analyticsExternalPlanningService")
 public class ExternalExecutionService {
 
     private final ExecutionContextFacade executionContextFacade;
@@ -26,13 +18,36 @@ public class ExternalExecutionService {
         this.executionContextFacade = executionContextFacade;
     }
 
-    /** Clave: planned_workout_id. Un entrenamiento sin sesion que cuente no aparece. */
-    public Map<Long, WorkoutResultView> fetchResultsByWorkout(Collection<Long> plannedWorkoutIds) {
-        return executionContextFacade.fetchCountedResults(plannedWorkoutIds).stream()
-                .collect(Collectors.toMap(WorkoutResultView::plannedWorkoutId, Function.identity(),
-                        // El indice ux_session_counted garantiza uno por
-                        // entrenamiento; si llegaran dos, gana el primero en vez
-                        // de reventar la generacion del plan.
-                        (first, second) -> first));
+    public List<WeekSessionInput> fetchWeekSessions(Long userId, LocalDate weekStart,
+                                                    LocalDate weekEnd,
+                                                    int durationToRepsDivisor) {
+        return executionContextFacade
+                .fetchCountedSessions(userId, weekStart, weekEnd, durationToRepsDivisor).stream()
+                .map(session -> new WeekSessionInput(
+                        session.plannedWorkoutId(),
+                        session.completionPercentage(),
+                        session.activeMinutes(),
+                        session.sessionRpe(),
+                        session.satisfaction(),
+                        session.completedExercises(),
+                        session.executedVolume(),
+                        session.executedReps(),
+                        session.executedSeconds(),
+                        session.dominantSkipReason()))
+                .toList();
+    }
+
+    /**
+     * Dias sin ninguna sesion valida al cierre (17.5). Null si nunca entreno: no
+     * es cero, y tampoco un numero grande arbitrario que marcaria como abandono
+     * a alguien que acaba de inscribirse.
+     */
+    public Short daysSinceLastWorkout(Long userId, LocalDate weekEnd) {
+        return executionContextFacade.fetchLastCountedSessionAt(userId)
+                .map(at -> {
+                    long days = ChronoUnit.DAYS.between(at.toLocalDate(), weekEnd);
+                    return (short) Math.max(0, Math.min(days, Short.MAX_VALUE));
+                })
+                .orElse(null);
     }
 }

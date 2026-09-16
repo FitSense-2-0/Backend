@@ -18,5 +18,7 @@ public record WeeklyTrainingPlanResource(
         String adjustmentApplied,
         String adjustmentReason,
         OffsetDateTime activatedAt,
-        List<PlannedWorkoutResource> workouts
+        List<PlannedWorkoutResource> workouts,
+        /** Con que esfuerzo hacer las repeticiones. Sin esto el numero fijo no se entiende. */
+        EffortGuidanceResource effortGuidance
 ) {}

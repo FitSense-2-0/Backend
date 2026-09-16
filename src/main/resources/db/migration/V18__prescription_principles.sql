@@ -26,7 +26,7 @@
 -- No afecta planes ya generados: planned_workout_exercises guarda su propio
 -- prescription_type.
 --
--- 2. POR QUE SE QUITA by_goal
+-- 2. POR QUE SE QUITA by_goal (configuracion nueva: siguiente MVP-1.N)
 -- Un rango por objetivo (INCREASE_STRENGTH = 4-10 para todo) hacia ilegal la
 -- prescripcion coherente: 15 elevaciones de talon para un perfil de fuerza
 -- se rechazaban. Los rangos ademas no tenian respaldo (problema 9).
@@ -58,21 +58,49 @@ SET default_prescription = CASE
 WHERE bp.body_part_id = e.body_part_id;
 
 
--- 2. CONFIGURACION MVP-1.5 --------------------------------------------
+-- 2. CONFIGURACION NUEVA ----------------------------------------------
+-- Se parte de la configuracion ACTIVA, sea cual sea, y no de un nombre fijo.
+-- La primera version de esta migracion asumia que la activa era MVP-1.4 y
+-- fallo con ux_config_active: en la base habia otra version activa. Partir de
+-- la activa ademas conserva cualquier clave que esa version haya anadido.
+-- El nombre nuevo es el siguiente MVP-1.N libre, para no chocar con versiones
+-- que ya existan.
 
-UPDATE calculation_configs SET is_active = FALSE WHERE version = 'MVP-1.4';
+DO $$
+DECLARE
+activas       INTEGER;
+    base_version  TEXT;
+    base_params   JSONB;
+    nueva_version TEXT;
+BEGIN
+SELECT COUNT(*) INTO activas FROM calculation_configs WHERE is_active;
+IF activas <> 1 THEN
+        RAISE EXCEPTION 'Antes de V18 debe haber exactamente una configuracion activa y hay %', activas;
+END IF;
+
+SELECT version, params INTO base_version, base_params
+FROM calculation_configs WHERE is_active;
+
+SELECT 'MVP-1.' || (COALESCE(MAX(substring(version FROM '^MVP-1\.(\d+)$')::INTEGER), 0) + 1)
+INTO nueva_version
+FROM calculation_configs;
+
+-- ux_config_active admite una sola fila activa: desactivar ANTES de insertar.
+UPDATE calculation_configs SET is_active = FALSE WHERE is_active;
 
 INSERT INTO calculation_configs (version, description, params, is_active)
-SELECT
-    'MVP-1.5',
-    'Principios P-1.0: sin rango por objetivo, limite amplio de repeticiones. Provisional.',
-    jsonb_set(params, '{prescription}',
-              ((params -> 'prescription') - 'by_goal') || jsonb_build_object(
-                      'rep_limits', jsonb_build_object('min_reps', 6, 'max_reps', 30)
-                                                          )
-    ),
-    TRUE
-FROM calculation_configs WHERE version = 'MVP-1.4';
+VALUES (
+           nueva_version,
+           'Principios P-1.0 (desde ' || base_version || '): sin rango por objetivo, limite amplio de repeticiones. Provisional.',
+           jsonb_set(base_params, '{prescription}',
+                     (COALESCE(base_params -> 'prescription', '{}'::jsonb) - 'by_goal')
+                         || jsonb_build_object('rep_limits',
+                                               jsonb_build_object('min_reps', 6, 'max_reps', 30))),
+           TRUE
+       );
+
+RAISE NOTICE 'V18: % desactivada, % creada y activa', base_version, nueva_version;
+END $$;
 
 
 -- 3. COMPROBACION -----------------------------------------------------
@@ -88,7 +116,7 @@ BEGIN
 SELECT COUNT(*) INTO activas FROM calculation_configs WHERE is_active;
 
 SELECT (params -> 'prescription') ? 'rep_limits',
-        (params -> 'prescription') ? 'by_goal'
+    (params -> 'prescription') ? 'by_goal'
 INTO tiene_limites, tiene_by_goal
 FROM calculation_configs WHERE is_active;
 
@@ -97,7 +125,7 @@ FROM exercises
 WHERE is_active AND default_prescription = 'DURATION' AND name_en ~* '\ycrunch\y';
 
 SELECT COUNT(*) FILTER (WHERE default_prescription = 'DURATION'),
-        COUNT(*) FILTER (WHERE default_prescription = 'SETS_REPS')
+    COUNT(*) FILTER (WHERE default_prescription = 'SETS_REPS')
 INTO activos_duracion, activos_reps
 FROM exercises WHERE is_active;
 
@@ -114,6 +142,6 @@ END IF;
         RAISE EXCEPTION '% crunch activos siguen marcados como DURATION', crunch_duracion;
 END IF;
 
-    RAISE NOTICE 'V18 aplicada: MVP-1.5 activa. Activos por duracion: %, por repeticiones: %',
+    RAISE NOTICE 'V18 aplicada. Activos por duracion: %, por repeticiones: %',
                  activos_duracion, activos_reps;
 END $$;
