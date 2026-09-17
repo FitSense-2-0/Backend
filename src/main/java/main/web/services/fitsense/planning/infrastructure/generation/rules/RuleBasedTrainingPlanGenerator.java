@@ -36,6 +36,9 @@ public class RuleBasedTrainingPlanGenerator implements TrainingPlanGenerator {
     private static final int EXERCISES_PER_SESSION = 5;
     private static final int EXERCISES_SHORT_SESSION = 4;
     private static final int SHORT_SESSION_MINUTES = 30;
+    /** Tope al completar la duracion minima (V20). */
+    private static final int MAX_EXERCISES_PER_SESSION = 8;
+
 
     /** 20.4: los de duracion van 3 series de 40 segundos con 45 de descanso. */
     private static final short DURATION_SETS = 3;
@@ -60,9 +63,13 @@ public class RuleBasedTrainingPlanGenerator implements TrainingPlanGenerator {
     @Override
     public PlanDraft generate(PlanGenerationContext context, List<String> previousProblems) {
         var profile = context.profile();
-        int days = Math.min(context.effectiveDaysPerWeek(), profile.availableDays().size());
-        var focuses = focusSequence(days);
-        var dates = scheduleDates(context.weekStartDate(), profile.availableDays(), days);
+        // Division semanal (WeeklySplitPlanner): la misma que recibe la IA como
+        // suggested_split y la que usa el validador para sus mensajes.
+        var split = context.suggestedSplit();
+        var dates = split.stream().map(main.web.services.fitsense.planning.domain.services
+                .WeeklySplitPlanner.PlannedSession::date).toList();
+        var focuses = split.stream().map(main.web.services.fitsense.planning.domain.services
+                .WeeklySplitPlanner.PlannedSession::focus).toList();
 
         int sessionMinutes = context.effectiveSessionMinutes();
         int exercisesPerSession = sessionMinutes < SHORT_SESSION_MINUTES
@@ -75,15 +82,67 @@ public class RuleBasedTrainingPlanGenerator implements TrainingPlanGenerator {
 
         var prescription = Prescription.forGoal(profile.goalType());
 
+        // El plan BASE se arma siempre igual, con o sin ajuste: el reductor solo
+        // sabe bajar volumen, asi que si la semana 1 se completo hasta el minimo
+        // de minutos y la semana 2 no, el objetivo quedaria por encima del base
+        // y el reductor destruiria la sesion. Por eso el minimo se calcula aqui
+        // sin mirar el ajuste (V20 solo lo VALIDA cuando no hay orden de volumen).
+        int minimumMinutes = context.prescription() == null ? 0
+                : sessionMinutes * context.prescription().floorPct() / 100;
+        int techo = profile.maxSessionMinutes();
+
         var workouts = new ArrayList<PlanDraft.DraftWorkout>();
+        Set<Long> previousDayIds = Set.of();
         for (int i = 0; i < dates.size(); i++) {
             var focus = focuses.get(i);
-            var picked = selector.pick(focus, exercisesPerSession);
+            boolean consecutive = i > 0 && dates.get(i - 1).plusDays(1).equals(dates.get(i));
+            // V18: nada del dia anterior si los dias estan pegados.
+            selector.block(consecutive ? previousDayIds : Set.of());
+            var picked = new ArrayList<>(selector.pick(focus, exercisesPerSession));
 
             var exercises = new ArrayList<PlanDraft.DraftExercise>();
             for (var candidate : picked) {
                 exercises.add(toDraftExercise(candidate, prescription, context));
             }
+
+            // V20: sin orden de volumen, la sesion llega al minimo de minutos
+            // anadiendo ejercicios del enfoque, nunca alargando descansos.
+            if (minimumMinutes > 0 && context.prescription() != null) {
+                while (exercises.size() < MAX_EXERCISES_PER_SESSION
+                        && durationEstimator.estimateMinutes(new PlanDraft.DraftWorkout(dates.get(i), focus,
+                        nameOf(focus), sessionMinutes, exercises), context.prescription()) < minimumMinutes) {
+                    var extra = selector.pickAdditional(focus, picked);
+                    if (extra.isEmpty()) break;
+                    picked.add(extra.get());
+                    exercises.add(toDraftExercise(extra.get(), prescription, context));
+                }
+                // Si con el tope de ejercicios no llega (principiante a 2 series
+                // con 60 minutos), sube a 3 series de a un ejercicio: ACSM 2009
+                // admite 1-3 series para principiantes.
+                for (int k = 0; k < exercises.size()
+                        && durationEstimator.estimateMinutes(new PlanDraft.DraftWorkout(dates.get(i), focus,
+                        nameOf(focus), sessionMinutes, exercises), context.prescription()) < minimumMinutes; k++) {
+                    var e = exercises.get(k);
+                    if (e.prescriptionType() == PrescriptionType.SETS_REPS && e.plannedSets() != null
+                            && e.plannedSets() < 3)
+                        exercises.set(k, new PlanDraft.DraftExercise(e.exerciseId(), e.prescriptionType(),
+                                (short) 3, e.plannedReps(), e.plannedDurationSeconds(), e.targetLoadKg(),
+                                e.restSeconds(), e.notes()));
+                }
+            }
+
+            // V4/V17: si el contenido supera el techo del perfil, se quitan
+            // ejercicios del final. Antes se declaraba el techo con un contenido
+            // mayor y V17 lo rechazaba (fuerza, 4x6 con 120 s, en 30 minutos).
+            if (context.prescription() != null) {
+                while (exercises.size() > 2 && durationEstimator.estimateMinutes(new PlanDraft.DraftWorkout(
+                                dates.get(i), focus, nameOf(focus), sessionMinutes, exercises),
+                        context.prescription()) > techo) {
+                    exercises.remove(exercises.size() - 1);
+                }
+            }
+            previousDayIds = exercises.stream().map(PlanDraft.DraftExercise::exerciseId)
+                    .collect(java.util.stream.Collectors.toSet());
             // Provisional: la duracion definitiva se calcula despues de reducir
             // el volumen, cuando el contenido ya es el final.
             workouts.add(new PlanDraft.DraftWorkout(dates.get(i), focus, nameOf(focus),
@@ -98,53 +157,6 @@ public class RuleBasedTrainingPlanGenerator implements TrainingPlanGenerator {
         // se habria generado sin ajuste, y la reduccion es comparable.
         var adjusted = new VolumeReducer(durationToRepsDivisor).apply(draft, context);
         return withRationale(withEstimatedDurations(adjusted, context), context);
-    }
-
-    // ------------------------------------------------------------------- 20.1
-
-    private List<WorkoutFocus> focusSequence(int days) {
-        return switch (days) {
-            case 1 -> List.of(WorkoutFocus.FULL_BODY);
-            case 2 -> List.of(WorkoutFocus.FULL_BODY, WorkoutFocus.FULL_BODY);
-            case 3 -> List.of(WorkoutFocus.FULL_BODY, WorkoutFocus.FULL_BODY, WorkoutFocus.FULL_BODY);
-            case 4 -> List.of(WorkoutFocus.UPPER_BODY, WorkoutFocus.LOWER_BODY,
-                    WorkoutFocus.UPPER_BODY, WorkoutFocus.LOWER_BODY);
-            case 5 -> List.of(WorkoutFocus.PUSH, WorkoutFocus.PULL, WorkoutFocus.LEGS,
-                    WorkoutFocus.UPPER_BODY, WorkoutFocus.LOWER_BODY);
-            // 7 se fuerza a 6; el septimo dia queda de descanso.
-            default -> List.of(WorkoutFocus.PUSH, WorkoutFocus.PULL, WorkoutFocus.LEGS,
-                    WorkoutFocus.PUSH, WorkoutFocus.PULL, WorkoutFocus.LEGS);
-        };
-    }
-
-    /**
-     * Primeros days_per_week valores de available_days, separando los
-     * consecutivos cuando la lista lo permite (20.1).
-     * <p>
-     * Separar importa por la validacion 13: con FULL_BODY repetido no hay
-     * conflicto, pero con la rotacion de 6 dias dos PUSH seguidos la fallarian.
-     */
-    private List<LocalDate> scheduleDates(LocalDate weekStart, List<Short> availableDays, int days) {
-        var sorted = availableDays.stream().sorted().toList();
-        if (days <= 0 || sorted.isEmpty()) return List.of();
-        if (days >= sorted.size())
-            return sorted.stream().map(day -> weekStart.plusDays(day - 1L)).toList();
-
-        var chosen = new ArrayList<Short>();
-        double step = (double) sorted.size() / days;
-        for (int i = 0; i < days; i++) {
-            int index = Math.min((int) Math.round(i * step), sorted.size() - 1);
-            short day = sorted.get(index);
-            if (!chosen.contains(day)) chosen.add(day);
-        }
-        for (short day : sorted) {
-            if (chosen.size() >= days) break;
-            if (!chosen.contains(day)) chosen.add(day);
-        }
-
-        return chosen.stream().sorted()
-                .map(day -> weekStart.plusDays(day - 1L))
-                .toList();
     }
 
     // ------------------------------------------------------------------- 20.4
@@ -167,8 +179,17 @@ public class RuleBasedTrainingPlanGenerator implements TrainingPlanGenerator {
                 .map(PreviousWeekSummary.LoadReference::loadKg)
                 .orElse(null);
 
+        // Minimo por zona (migracion V20): la tabla por objetivo pone 6
+        // repeticiones para fuerza, y 6 elevaciones de talon no son coherentes.
+        var limites = context.prescription() == null ? null : context.prescription().repLimits();
+        String level = context.profile().fitnessLevel();
+        short reps = limites == null ? prescription.reps()
+                : (short) Math.max(prescription.reps(), limites.minRepsFor(candidate.bodyPartCode(), level));
+        // Principio 5: principiante, 2 series.
+        short sets = "BEGINNER".equals(level) ? (short) Math.min(prescription.sets(), 2) : prescription.sets();
+
         return new PlanDraft.DraftExercise(candidate.exerciseId(), PrescriptionType.SETS_REPS,
-                prescription.sets(), prescription.reps(), null, suggestedLoad,
+                sets, reps, null, suggestedLoad,
                 prescription.restSeconds(), null);
     }
 

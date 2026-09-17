@@ -9,12 +9,20 @@ import main.web.services.fitsense.planning.domain.model.valueobjects.SafetyProfi
 import org.springframework.stereotype.Service;
 
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 
 /** Capa anticorrupcion hacia el catalogo: el conjunto elegible de 20.3. */
 @Service
 public class ExternalCatalogService {
+
+    /**
+     * Grupos que ningun enfoque admite (WorkoutFocus). Solo entraban por la
+     * exencion de FULL_BODY y engordaban el prompt: 26 ejercicios de cuello,
+     * antebrazo y cardio que la IA no podia usar con sentido.
+     */
+    private static final Set<String> BODY_PARTS_OUTSIDE_FOCUS = Set.of("neck", "lower arms", "cardio");
 
     private final CatalogContextFacade catalogContextFacade;
 
@@ -39,13 +47,20 @@ public class ExternalCatalogService {
                         safety.excludeFloorWork(),
                         safety.excludeAxialLoad())
                 .stream()
+                .filter(view -> !BODY_PARTS_OUTSIDE_FOCUS.contains(view.bodyPartCode()))
+                // Estiramientos fuera del trabajo principal (hallazgo M): son
+                // movilidad, no entrenamiento de fuerza. Quedan en el catalogo
+                // para cuando exista calentamiento y vuelta a la calma.
+                .filter(view -> view.nameEs() == null
+                        || !view.nameEs().toLowerCase(Locale.ROOT).contains("estiramiento"))
                 .map(view -> new CandidateExercise(
                         view.exerciseId(),
                         view.nameEs(),
                         view.bodyPartCode(),
                         view.equipmentCode(),
                         view.difficultyLevel(),
-                        view.isDurationBased() ? PrescriptionType.DURATION : PrescriptionType.SETS_REPS))
+                        view.isDurationBased() ? PrescriptionType.DURATION : PrescriptionType.SETS_REPS,
+                        view.targetMuscle()))
                 .toList();
     }
 

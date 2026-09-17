@@ -2,6 +2,7 @@ package main.web.services.fitsense.planning.infrastructure.generation.ai;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
 import main.web.services.fitsense.planning.domain.model.valueobjects.PlanGenerationContext;
+import main.web.services.fitsense.planning.domain.services.PlanDraftValidator;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -59,7 +60,35 @@ public record PlanInputSnapshot(
             @JsonProperty("session_minutes") int sessionMinutes,
             @JsonProperty("training_location") String trainingLocation,
             @JsonProperty("max_difficulty_level") int maxDifficultyLevel,
-            @JsonProperty("rep_limits") RepLimits repLimits) {}
+            @JsonProperty("rep_limits") RepLimits repLimits,
+            /** V20: minutos minimos por sesion. null cuando hay orden de volumen. */
+            @JsonProperty("min_session_minutes") Integer minSessionMinutes,
+            /** V21: descanso maximo entre series. */
+            @JsonProperty("max_rest_seconds") Integer maxRestSeconds,
+            /**
+             * Division semanal sugerida (WeeklySplitPlanner): fecha y enfoque de
+             * cada sesion. Cumple la recuperacion de 48 h y la frecuencia; la IA
+             * puede proponer otra si tambien cumple V13, V18 y V22.
+             */
+            @JsonProperty("suggested_split") List<SuggestedSession> suggestedSplit,
+            /**
+             * Solo con REDUCE_VOLUME: tope de series y repeticiones de cada
+             * ejercicio que ya estaba la semana anterior (V19). null si no aplica.
+             */
+            @JsonProperty("reduce_volume_caps") List<ReduceVolumeCap> reduceVolumeCaps,
+            /** Minimo de repeticiones por nivel: 8 para BEGINNER, null para el resto. */
+            @JsonProperty("min_reps_for_level") Integer minRepsForLevel) {}
+
+    public record ReduceVolumeCap(
+            @JsonProperty("exercise_id") long exerciseId,
+            @JsonProperty("max_sets") int maxSets,
+            @JsonProperty("max_reps") int maxReps,
+            /** COMPLETED: puede progresar un poco. HOLD: no puede subir. */
+            String reason) {}
+
+    public record SuggestedSession(
+            @JsonProperty("scheduled_date") LocalDate scheduledDate,
+            @JsonProperty("focus_code") String focusCode) {}
 
     /**
      * Limite amplio que verifica V16 (MVP-1.5). Reemplaza al rango por objetivo
@@ -69,7 +98,9 @@ public record PlanInputSnapshot(
      */
     public record RepLimits(
             @JsonProperty("min_reps") Integer minReps,
-            @JsonProperty("max_reps") Integer maxReps) {}
+            @JsonProperty("max_reps") Integer maxReps,
+            /** Minimo provisional por body_part (gemelos 12, abdomen 10). */
+            @JsonProperty("min_reps_by_body_part") Map<String, Integer> minRepsByBodyPart) {}
 
     public record Adjustment(
             List<String> types,
@@ -136,7 +167,9 @@ public record PlanInputSnapshot(
              * estiramiento a 3x7 y un planche a 2x60 s: la IA no sabia si el
              * ejercicio era de repeticiones o de sosten. V7 exige respetarlo.
              */
-            @JsonProperty("prescription_type") String prescriptionType) {}
+            @JsonProperty("prescription_type") String prescriptionType,
+            /** biceps, triceps, pectorals...: separa lo que body_part mezcla (V22). */
+            @JsonProperty("target_muscle") String targetMuscle) {}
 
     public static PlanInputSnapshot of(PlanGenerationContext context) {
         var profile = context.profile();
@@ -153,7 +186,17 @@ public record PlanInputSnapshot(
                 context.effectiveSessionMinutes(), profile.trainingLocation(),
                 context.effectiveMaxDifficulty(),
                 limites == null || !limites.isComplete() ? null
-                        : new RepLimits(limites.minReps(), limites.maxReps()));
+                        : new RepLimits(limites.minReps(), limites.maxReps(),
+                        limites.minRepsByBodyPart() == null ? Map.of() : limites.minRepsByBodyPart()),
+                minSessionMinutesOrNull(context),
+                context.prescription() == null ? null : context.prescription().maxRestSecondsOrDefault(),
+                context.suggestedSplit().stream()
+                        .map(session -> new SuggestedSession(session.date(), session.focus().name()))
+                        .toList(),
+                reduceVolumeCapsOrNull(context),
+                "BEGINNER".equals(profile.fitnessLevel())
+                        ? main.web.services.fitsense.configuration.domain.model.valueobjects
+                        .PrescriptionParams.RepLimits.MIN_REPS_BEGINNER : null);
 
         var adjustment = context.adjustment() == null ? null : new Adjustment(
                 context.adjustment().types().stream().map(Enum::name).toList(),
@@ -208,7 +251,8 @@ public record PlanInputSnapshot(
                 .add(new AvailableExercise(candidate.exerciseId(), candidate.name(),
                         candidate.bodyPartCode(), candidate.equipmentCode(), candidate.difficulty(),
                         candidate.defaultPrescription() == null ? null
-                                : candidate.defaultPrescription().name())));
+                                : candidate.defaultPrescription().name(),
+                        candidate.targetMuscle())));
 
         var random = new java.util.Random(
                 context.userId() * 1_000_003L + context.weekStartDate().toEpochDay());
@@ -228,5 +272,18 @@ public record PlanInputSnapshot(
                 PrescriptionPrinciples.VERSION,
                 user, constraints, adjustment, previousWeek, exercises,
                 context.safety() == null ? null : context.safety().describe());
+    }
+
+    private static Integer minSessionMinutesOrNull(PlanGenerationContext context) {
+        int floor = PlanDraftValidator.minimumSessionMinutes(context);
+        return floor <= 0 ? null : floor;
+    }
+
+    private static List<ReduceVolumeCap> reduceVolumeCapsOrNull(PlanGenerationContext context) {
+        var caps = PlanDraftValidator.reductionCaps(context);
+        if (caps.isEmpty()) return null;
+        return caps.values().stream()
+                .map(cap -> new ReduceVolumeCap(cap.exerciseId(), cap.maxSets(), cap.maxReps(), cap.reason()))
+                .toList();
     }
 }

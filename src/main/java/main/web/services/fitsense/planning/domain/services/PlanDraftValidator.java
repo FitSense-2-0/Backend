@@ -10,7 +10,8 @@ import java.util.*;
 import java.util.stream.Collectors;
 
 /**
- * Las diecisiete validaciones de 19.3, aplicadas al borrador antes de persistir.
+ * Las validaciones de 19.3 (1-17) y las de coherencia 18-21, aplicadas al
+ * borrador antes de persistir.
  * <p>
  * Servicio de dominio puro: no consulta la base. Todo lo que necesita viaja en
  * el contexto, que es exactamente lo que se guarda en input_snapshot, asi que
@@ -46,7 +47,12 @@ public class PlanDraftValidator {
         validateSessions(draft, context, problems);
         validateVolumeTarget(draft, context, durationToRepsDivisor, problems);
         validateLoads(draft, context, problems);
-        validatePrescriptionRanges(draft, context, problems);
+        validatePrescriptionRanges(draft, context, eligible, problems);
+        validateRecovery(draft, eligible, problems);
+        validateArmSplit(draft, eligible, problems);
+        appendSplitSuggestion(context, problems);
+        validateReductionDoesNotIncrease(draft, context, eligible, problems);
+        validateMinimumDurationAndRest(draft, context, problems);
 
         if (!problems.isEmpty()) throw new InvalidPlanDraftException(problems);
     }
@@ -70,7 +76,7 @@ public class PlanDraftValidator {
                             problems.add("V6: el ejercicio %d tiene dificultad %d y el maximo es %d."
                                     .formatted(exercise.exerciseId(), candidate.difficulty(), maxDifficulty));
 
-                        // 7 (V18, principio 7): el tipo lo fija el catalogo, no
+                        // 7 (migracion V18, principio 7): el tipo lo fija el catalogo, no
                         // el generador. Sin esto llegaron un estiramiento a 3x7
                         // y un planche a 2x60 s. El motor de reglas cumple por
                         // construccion: copia defaultPrescription.
@@ -402,11 +408,12 @@ public class PlanDraftValidator {
      * Mejor no validar que inventar limites.
      */
     private void validatePrescriptionRanges(PlanDraft draft, PlanGenerationContext context,
+                                            Map<Long, CandidateExercise> eligible,
                                             List<String> problems) {
         var prescription = context.prescription();
         if (prescription == null) return;
 
-        // 16 (V18, principios P-1.0): limite amplio por ejercicio. Las
+        // 16 (migracion V18, principios P-1.0): limite amplio por ejercicio. Las
         // repeticiones las decide el generador; aqui solo se rechaza lo absurdo.
         // Ya no hay rango por objetivo: 15 elevaciones de talon para un perfil
         // de fuerza son coherentes y el rango 4-10 las rechazaba.
@@ -418,10 +425,16 @@ public class PlanDraftValidator {
                     .filter(exercise -> exercise.plannedReps() != null)
                     .forEach(exercise -> {
                         int reps = exercise.plannedReps();
-                        if (reps < limites.minReps() || reps > limites.maxReps())
-                            problems.add("V16: el ejercicio %d lleva %d repeticiones y el limite es de %d a %d."
-                                    .formatted(exercise.exerciseId(), reps,
-                                            limites.minReps(), limites.maxReps()));
+                        var candidate = eligible.get(exercise.exerciseId());
+                        String zona = candidate == null ? null : candidate.bodyPartCode();
+                        // Minimo por zona (migracion V20, provisional): sin esto la IA
+                        // puso los 12 ejercicios de la semana a 3x10, gemelos incluidos.
+                        int minimo = limites.minRepsFor(zona, context.profile().fitnessLevel());
+                        if (reps < minimo || reps > limites.maxReps())
+                            problems.add(("V16: el ejercicio %d (%s) lleva %d repeticiones y el limite "
+                                    + "es de %d a %d.")
+                                    .formatted(exercise.exerciseId(), zona, reps,
+                                            minimo, limites.maxReps()));
                     });
         }
 
@@ -458,5 +471,263 @@ public class PlanDraftValidator {
                         .formatted(workout.scheduledDate(), workout.expectedDurationMinutes(),
                                 estimada, desvio, tolerancia));
         }
+    }
+
+    /**
+     * Grupos que necesitan recuperacion entre sesiones. Abdomen, brazos y
+     * gemelos quedan fuera: body_part es demasiado grueso (biceps y triceps
+     * comparten "upper arms") y son grupos que toleran dias seguidos. Criterio
+     * de diseno declarado.
+     */
+    private static final Set<String> RECOVERY_BODY_PARTS =
+            Set.of("chest", "back", "shoulders", "upper legs");
+
+    /**
+     * Validacion 18: recuperacion entre dias consecutivos.
+     * <ul>
+     *   <li>El mismo ejercicio no se repite en dias consecutivos.</li>
+     *   <li>Pecho, espalda, hombros y piernas no se trabajan dos dias seguidos.</li>
+     * </ul>
+     * V13 solo comparaba el NOMBRE del enfoque: FULL_BODY el lunes y UPPER_BODY
+     * el martes pasaban aunque repitieran pecho, espalda y hombros, y en la
+     * prueba el mismo press y el mismo remo aparecieron lunes y martes.
+     */
+    private void validateRecovery(PlanDraft draft, Map<Long, CandidateExercise> eligible,
+                                  List<String> problems) {
+        var ordered = draft.workouts().stream()
+                .sorted(Comparator.comparing(PlanDraft.DraftWorkout::scheduledDate))
+                .toList();
+
+        for (int i = 1; i < ordered.size(); i++) {
+            var previous = ordered.get(i - 1);
+            var current = ordered.get(i);
+            if (!previous.scheduledDate().plusDays(1).equals(current.scheduledDate())) continue;
+
+            var previousIds = previous.exercises().stream()
+                    .map(PlanDraft.DraftExercise::exerciseId).collect(Collectors.toSet());
+            current.exercises().stream()
+                    .map(PlanDraft.DraftExercise::exerciseId)
+                    .filter(previousIds::contains)
+                    .distinct()
+                    .forEach(id -> problems.add(("V18: el ejercicio %d se repite en dias consecutivos "
+                            + "(%s y %s).").formatted(id, previous.scheduledDate(), current.scheduledDate())));
+
+            var previousGroups = recoveryGroupsOf(previous, eligible);
+            var shared = recoveryGroupsOf(current, eligible).stream()
+                    .filter(previousGroups::contains)
+                    .sorted()
+                    .toList();
+            if (!shared.isEmpty())
+                problems.add(("V18: %s se trabaja en dias consecutivos (%s y %s). Alterna tren superior "
+                        + "e inferior, o empuje y traccion.")
+                        .formatted(shared, previous.scheduledDate(), current.scheduledDate()));
+        }
+    }
+
+    private static Set<String> recoveryGroupsOf(PlanDraft.DraftWorkout workout,
+                                                Map<Long, CandidateExercise> eligible) {
+        return workout.exercises().stream()
+                .map(exercise -> eligible.get(exercise.exerciseId()))
+                .filter(Objects::nonNull)
+                .map(CandidateExercise::bodyPartCode)
+                .filter(RECOVERY_BODY_PARTS::contains)
+                .collect(Collectors.toSet());
+    }
+
+    /**
+     * Validacion 19: si la orden es REDUCE_VOLUME, un ejercicio que se repite de
+     * la semana anterior no sube series ni repeticiones. En la prueba, con -20 %
+     * ordenado, la IA subio el press de 10 a 13 y el crunch de 12 a 16.
+     * <p>
+     * El tope de repeticiones es el mayor entre lo prescrito antes y el minimo
+     * de su zona: si el minimo por zona es nuevo, subir hasta el no es progresar.
+     */
+    private void validateReductionDoesNotIncrease(PlanDraft draft, PlanGenerationContext context,
+                                                  Map<Long, CandidateExercise> eligible,
+                                                  List<String> problems) {
+        var caps = reductionCaps(context);
+        if (caps.isEmpty()) return;
+
+        draft.workouts().stream()
+                .flatMap(workout -> workout.exercises().stream())
+                .filter(exercise -> exercise.prescriptionType() == PrescriptionType.SETS_REPS)
+                .forEach(exercise -> {
+                    var cap = caps.get(exercise.exerciseId());
+                    if (cap == null) return;
+                    long id = exercise.exerciseId();
+                    if (exercise.plannedSets() != null && exercise.plannedSets() > cap.maxSets())
+                        problems.add(("V19: el ejercicio %d lleva %d series y su tope es %d (%s). "
+                                + "Maximo: %d series y %d repeticiones.")
+                                .formatted(id, exercise.plannedSets(), cap.maxSets(), capReason(cap),
+                                        cap.maxSets(), cap.maxReps()));
+                    if (exercise.plannedReps() != null && exercise.plannedReps() > cap.maxReps())
+                        problems.add(("V19: el ejercicio %d lleva %d repeticiones y su tope es %d (%s). "
+                                + "Maximo: %d series y %d repeticiones.")
+                                .formatted(id, exercise.plannedReps(), cap.maxReps(), capReason(cap),
+                                        cap.maxSets(), cap.maxReps()));
+                });
+    }
+
+    private static String capReason(ReductionCap cap) {
+        return "HOLD".equals(cap.reason())
+                ? "no lo completo, no hay registro o el esfuerzo fue alto: no puede subir"
+                : "lo completo: puede progresar un poco";
+    }
+
+    /**
+     * Tope de un ejercicio que se repite en una semana de reduccion.
+     *
+     * @param reason COMPLETED (lo hizo completo y sin esfuerzo alto: puede
+     *               progresar un poco) o HOLD (parcial, saltado, sin registro o
+     *               RPE alto: no puede subir)
+     */
+    public record ReductionCap(long exerciseId, int maxSets, int maxReps, String reason) {}
+
+    /** Progresion permitida en un ejercicio completado durante una semana de reduccion. */
+    private static final int REDUCTION_EXTRA_SETS = 1;
+    private static final int REDUCTION_EXTRA_REPS = 2;
+    private static final int HIGH_SESSION_RPE = 8;
+
+    /**
+     * Topes de V19, calculados una sola vez para el validador y para el
+     * snapshot (constraints.reduce_volume_caps).
+     * <p>
+     * AFINADO CON EL DESEMPENO (principio 9). La version anterior prohibia subir
+     * en CUALQUIER ejercicio repetido. En la prueba la IA fallo dos veces solo por
+     * eso: para llegar al volumen reutilizaba ejercicios de la semana anterior, y
+     * sin margen rompia otra regla. Lo coherente depende de como le fue:
+     * <ul>
+     *   <li>HOLD: no lo completo (parcial o saltado), no hay registro, o ese dia
+     *       reporto RPE 8 o mas. No puede subir series ni repeticiones.</li>
+     *   <li>COMPLETED: lo hizo completo y sin esfuerzo alto. Puede mantener o
+     *       progresar un poco: +1 serie y +2 repeticiones como maximo. Criterio de
+     *       diseno: sobrecarga pequena y gradual. El total igual debe bajar (V8).</li>
+     * </ul>
+     * Si el ejercicio aparecio varias veces, basta una ocurrencia en HOLD para
+     * que quede en HOLD. Repeticiones: nunca por debajo del minimo de zona y nivel.
+     */
+    public static Map<Long, ReductionCap> reductionCaps(PlanGenerationContext context) {
+        var adjustment = context.adjustment();
+        if (adjustment == null || !adjustment.has(AdjustmentType.REDUCE_VOLUME)) return Map.of();
+        var previous = context.previousWeek();
+        if (previous == null || previous.prescriptions() == null) return Map.of();
+
+        Map<LocalDate, Short> rpeByDate = new HashMap<>();
+        if (previous.workouts() != null)
+            previous.workouts().forEach(w -> { if (w.scheduledDate() != null && w.sessionRpe() != null)
+                rpeByDate.put(w.scheduledDate(), w.sessionRpe()); });
+
+        Map<Long, Integer> sets = new HashMap<>();
+        Map<Long, Integer> reps = new HashMap<>();
+        Map<Long, Boolean> hold = new HashMap<>();
+        for (var outcome : previous.prescriptions()) {
+            if (outcome.exerciseId() == null || !"SETS_REPS".equals(outcome.prescriptionType())) continue;
+            long id = outcome.exerciseId();
+            if (outcome.sets() != null) sets.merge(id, (int) outcome.sets(), Math::max);
+            if (outcome.reps() != null) reps.merge(id, (int) outcome.reps(), Math::max);
+
+            Short rpe = outcome.scheduledDate() == null ? null : rpeByDate.get(outcome.scheduledDate());
+            boolean completedEasy = "COMPLETED".equals(outcome.exerciseStatus())
+                    && (rpe == null || rpe < HIGH_SESSION_RPE);
+            hold.merge(id, !completedEasy, Boolean::logicalOr);
+        }
+
+        var bodyParts = new HashMap<Long, String>();
+        context.availableExercises().forEach(c -> bodyParts.put(c.exerciseId(), c.bodyPartCode()));
+        var limites = context.prescription() == null ? null : context.prescription().repLimits();
+        String level = context.profile() == null ? null : context.profile().fitnessLevel();
+
+        var caps = new TreeMap<Long, ReductionCap>();
+        for (var id : sets.keySet()) {
+            if (!reps.containsKey(id)) continue;
+            boolean isHold = hold.getOrDefault(id, true);
+            int floor = limites == null ? 0 : limites.minRepsFor(bodyParts.get(id), level);
+            int maxSets = sets.get(id) + (isHold ? 0 : REDUCTION_EXTRA_SETS);
+            int maxReps = Math.max(reps.get(id) + (isHold ? 0 : REDUCTION_EXTRA_REPS), floor);
+            caps.put(id, new ReductionCap(id, maxSets, maxReps, isHold ? "HOLD" : "COMPLETED"));
+        }
+        return caps;
+    }
+
+    /**
+     * Validaciones 20 y 21: duracion minima y descanso maximo.
+     * <p>
+     * 20. Sin orden de volumen (primera semana), el contenido de cada sesion
+     * debe llegar al session_minutes_floor_pct (70 %) de los minutos que pidio la
+     * persona. El parametro existia desde V12 y ninguna validacion lo usaba: en
+     * la prueba, 45 minutos pedidos dieron sesiones de 22-27. Cuando hay orden
+     * de volumen NO se aplica: el volumen manda y exigir ademas un piso de tiempo
+     * solo podria cumplirse inflando descansos.
+     * <p>
+     * 21. Ningun descanso supera max_rest_seconds (180 s), para que la duracion
+     * se consiga con trabajo y no con pausas.
+     */
+    private void validateMinimumDurationAndRest(PlanDraft draft, PlanGenerationContext context,
+                                                List<String> problems) {
+        var prescription = context.prescription();
+        if (prescription == null) return;
+
+        int maxRest = prescription.maxRestSecondsOrDefault();
+        draft.workouts().stream()
+                .flatMap(workout -> workout.exercises().stream())
+                .filter(exercise -> exercise.restSeconds() != null && exercise.restSeconds() > maxRest)
+                .forEach(exercise -> problems.add("V21: el ejercicio %d descansa %d s y el maximo es %d s."
+                        .formatted(exercise.exerciseId(), exercise.restSeconds(), maxRest)));
+
+        int floor = minimumSessionMinutes(context);
+        if (floor <= 0) return;
+        for (var workout : draft.workouts()) {
+            int estimada = durationEstimator.estimateMinutes(workout, prescription);
+            if (estimada < floor)
+                problems.add(("V20: el entrenamiento del %s dura unos %d minutos y el minimo es %d "
+                        + "(%d %% de %d). Agrega ejercicios o series, no descanso.")
+                        .formatted(workout.scheduledDate(), estimada, floor,
+                                prescription.floorPct(), context.effectiveSessionMinutes()));
+        }
+    }
+
+    /** 0 cuando no aplica: hay orden de volumen o no hay configuracion. */
+    public static int minimumSessionMinutes(PlanGenerationContext context) {
+        if (context.prescription() == null) return 0;
+        if (context.adjustment() != null && context.adjustment().isActive()) return 0;
+        return context.effectiveSessionMinutes() * context.prescription().floorPct() / 100;
+    }
+
+    /**
+     * Validacion 22: en "upper arms", PUSH solo admite triceps y PULL solo
+     * biceps. body_part no distingue uno de otro; target_muscle si. Con
+     * target_muscle desconocido no se rechaza.
+     */
+    private void validateArmSplit(PlanDraft draft, Map<Long, CandidateExercise> eligible,
+                                  List<String> problems) {
+        for (var workout : draft.workouts()) {
+            if (workout.focus() != WorkoutFocus.PUSH && workout.focus() != WorkoutFocus.PULL) continue;
+            String forbidden = workout.focus() == WorkoutFocus.PUSH ? "biceps" : "triceps";
+            workout.exercises().stream()
+                    .map(exercise -> eligible.get(exercise.exerciseId()))
+                    .filter(Objects::nonNull)
+                    .filter(candidate -> "upper arms".equals(candidate.bodyPartCode()))
+                    .filter(candidate -> candidate.targetMuscle() != null
+                            && candidate.targetMuscle().toLowerCase(Locale.ROOT).contains(forbidden))
+                    .forEach(candidate -> problems.add(("V22: el entrenamiento %s del %s incluye el ejercicio %d "
+                            + "de %s; %s admite solo %s.")
+                            .formatted(workout.focus(), workout.scheduledDate(), candidate.exerciseId(),
+                                    forbidden, workout.focus(),
+                                    workout.focus() == WorkoutFocus.PUSH ? "triceps" : "biceps")));
+        }
+    }
+
+    /**
+     * Si hubo errores de division (V13 o V18), se agrega la division que cumple:
+     * "alterna tren superior e inferior" no le dice al modelo que dia es cual,
+     * y en la prueba lo corrigio moviendo el problema al tren inferior.
+     */
+    private void appendSplitSuggestion(PlanGenerationContext context, List<String> problems) {
+        boolean splitProblem = problems.stream().anyMatch(p -> p.startsWith("V13") || p.startsWith("V18"));
+        if (!splitProblem || context.profile() == null || context.profile().availableDays() == null) return;
+        var split = context.suggestedSplit();
+        if (split.isEmpty()) return;
+        problems.add("DIVISION: usa estas fechas y enfoques, que cumplen V13 y V18: "
+                + WeeklySplitPlanner.describe(split) + ".");
     }
 }

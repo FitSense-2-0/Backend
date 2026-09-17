@@ -102,8 +102,8 @@ tolerancia NUMERIC;
     tiene_by_goal BOOLEAN;
 BEGIN
 SELECT (params -> 'adjustment' ->> 'volume_tolerance_pct')::NUMERIC,
-    (params -> 'prescription') ? 'rep_limits',
-    (params -> 'prescription') ? 'by_goal'
+        (params -> 'prescription') ? 'rep_limits',
+        (params -> 'prescription') ? 'by_goal'
 INTO tolerancia, tiene_limites, tiene_by_goal
 FROM calculation_configs WHERE is_active;
 

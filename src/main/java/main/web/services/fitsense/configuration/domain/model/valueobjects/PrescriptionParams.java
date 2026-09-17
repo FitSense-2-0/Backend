@@ -42,13 +42,51 @@ public record PrescriptionParams(
          * tope del rango 2-10 % de ACSM (2009), condicionado a cumplir lo pedido.
          * Sin clave en la configuracion se usa 10.
          */
-        Integer maxLoadIncreasePct
+        Integer maxLoadIncreasePct,
+
+        /**
+         * V20 (config): descanso maximo entre series. 180 s es el tope de los
+         * 2-3 min que ACSM (2009) indica para los ejercicios multiarticulares
+         * pesados. Evita que la duracion minima se cumpla inflando descansos en
+         * vez de con trabajo. Sin clave se usa 180.
+         */
+        Integer maxRestSeconds
 ) {
     public record RepRange(Integer minReps, Integer maxReps) {}
 
-    public record RepLimits(Integer minReps, Integer maxReps) {
+    /**
+     * @param minRepsByBodyPart V20: minimo PROVISIONAL por body_part (gemelos 12,
+     *                          abdomen 10). Decision de diseno sin referencia:
+     *                          aproxima la exigencia de cada ejercicio hasta que
+     *                          el catalogo este clasificado por categoria. Solo
+     *                          aplica a SETS_REPS.
+     */
+    public record RepLimits(Integer minReps, Integer maxReps, Map<String, Integer> minRepsByBodyPart) {
         public boolean isComplete() {
             return minReps != null && maxReps != null;
+        }
+
+        /** Minimo efectivo para un ejercicio: el de su body_part si es mayor que el general. */
+        public int minRepsFor(String bodyPartCode) {
+            int general = minReps == null ? 0 : minReps;
+            if (minRepsByBodyPart == null || bodyPartCode == null) return general;
+            Integer zona = minRepsByBodyPart.get(bodyPartCode);
+            return zona == null ? general : Math.max(general, zona);
+        }
+
+        /**
+         * Piso de repeticiones para principiantes: 8. ACSM (2009) recomienda
+         * 8-12 repeticiones para principiantes; usar el extremo inferior como
+         * piso es criterio de diseno. Lo respetan la IA (V16), el reductor de
+         * volumen y el motor de reglas, para que 3x6 no aparezca en un plan de
+         * principiante.
+         */
+        public static final int MIN_REPS_BEGINNER = 8;
+
+        /** Minimo efectivo segun zona Y nivel. */
+        public int minRepsFor(String bodyPartCode, String fitnessLevel) {
+            int base = minRepsFor(bodyPartCode);
+            return "BEGINNER".equals(fitnessLevel) ? Math.max(base, MIN_REPS_BEGINNER) : base;
         }
     }
 
@@ -70,6 +108,10 @@ public record PrescriptionParams(
     public int defaultRestSecondsOrDefault() { return defaultRestSeconds == null ? 60 : defaultRestSeconds; }
     public int maxLoadIncreasePctOrDefault() {
         return maxLoadIncreasePct == null ? 10 : maxLoadIncreasePct;
+    }
+
+    public int maxRestSecondsOrDefault() {
+        return maxRestSeconds == null ? 180 : maxRestSeconds;
     }
 
     public int durationTolerancePctOrDefault() {

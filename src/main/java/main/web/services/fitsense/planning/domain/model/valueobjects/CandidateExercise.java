@@ -13,5 +13,16 @@ public record CandidateExercise(
         String bodyPartCode,
         String equipmentCode,
         int difficulty,
-        PrescriptionType defaultPrescription
-) {}
+        PrescriptionType defaultPrescription,
+        /**
+         * Musculo objetivo del catalogo (biceps, triceps, pectorals...). Separa lo
+         * que body_part mezcla: "upper arms" es tanto biceps como triceps, y
+         * PUSH solo admite triceps y PULL solo biceps.
+         */
+        String targetMuscle
+) {
+    public CandidateExercise(Long exerciseId, String name, String bodyPartCode, String equipmentCode,
+                             int difficulty, PrescriptionType defaultPrescription) {
+        this(exerciseId, name, bodyPartCode, equipmentCode, difficulty, defaultPrescription, null);
+    }
+}

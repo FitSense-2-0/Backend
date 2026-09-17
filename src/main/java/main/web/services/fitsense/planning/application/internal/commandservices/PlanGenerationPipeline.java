@@ -86,9 +86,14 @@ public class PlanGenerationPipeline {
                     // El modelo respondio pero incumplio validaciones. Eso NO
                     // cuenta para el cortocircuito: es su capacidad, no una caida.
                     fallosSeguidos.set(0);
-                    problems = e.problems();
+                    // Se ACUMULAN los problemas de todos los intentos. En la prueba
+                    // el segundo intento solo recibio el error del primero,
+                    // corrigio ese y cometio otro del mismo tipo.
+                    var acumulados = new java.util.LinkedHashSet<>(problems);
+                    acumulados.addAll(e.problems());
+                    problems = List.copyOf(acumulados);
                     log.warn("Intento {} de IA rechazado para el usuario {}: {}",
-                            attempt, context.userId(), problems);
+                            attempt, context.userId(), e.problems());
                 }
             }
         }

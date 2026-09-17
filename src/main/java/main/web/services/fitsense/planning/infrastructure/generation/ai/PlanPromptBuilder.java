@@ -40,7 +40,7 @@ public class PlanPromptBuilder {
                     available_exercises; el backend rechaza otro distinto.
                     SETS_REPS exige planned_sets y planned_reps.
                     DURATION exige planned_duration_seconds.
-                8.  Si hay adjustment, la suma de volumen debe caer entre target_volume_min
+                8.  Si adjustment.target_volume no es null, la suma de volumen debe caer entre target_volume_min
                     y target_volume_max. Volumen = planned_sets x planned_reps, o
                     planned_duration_seconds x planned_sets / 30 para los de duracion.
                     La carga NO cuenta como volumen.
@@ -50,11 +50,13 @@ public class PlanPromptBuilder {
                     anterior va en null; nunca sube mas de un 10 % sobre el peso
                     usado, y solo si hizo todas las repeticiones.
                 12. No pongas dos entrenamientos el mismo dia.
-                13. No repitas el mismo focus_code en dias consecutivos.
+                13. No repitas el mismo focus_code en dias consecutivos. Usa las
+                    fechas y enfoques de constraints.suggested_split: ya cumplen
+                    esta regla y la 18. Si propones otra division, debe cumplirlas.
                 14. Si safety_notes no es null, respetalo al prescribir.
                     available_exercises YA excluye lo prohibido, pero de los que
-                    quedan elige y pauta las variantes mas conservadoras: menos
-                    rango de movimiento, menos series, mas descanso.
+                    quedan elige y pauta las variantes mas conservadoras: rango de
+                    movimiento comodo y sin dolor, menos series, mas descanso.
                 15. Cada entrenamiento debe CUBRIR su enfoque, no repetir zona.
                     Un FULL_BODY con seis ejercicios de biceps no es cuerpo
                     completo. Cubre al menos 2 body_part distintos de los que el
@@ -62,14 +64,14 @@ public class PlanPromptBuilder {
                     grupo se lleve mas de la mitad de la sesion.
                 16. Las repeticiones las decides tu, ejercicio por ejercicio,
                     con los PRINCIPIOS DE PRESCRIPCION de mas abajo. El backend
-                    solo verifica el limite de constraints.rep_limits: ningun
-                    planned_reps por debajo de min_reps ni por encima de
-                    max_reps. Ese limite NO es un objetivo ni una sugerencia:
-                    es solo el borde de lo absurdo. No uses sus extremos por
-                    defecto.
-                17. expected_duration_minutes debe corresponder al contenido
-                    real, no a session_minutes. El backend lo recalcula asi y
-                    rechaza un desvio mayor al 20 %:
+                    verifica constraints.rep_limits: ningun planned_reps por
+                    encima de max_reps ni por debajo del minimo de su body_part
+                    (min_reps_by_body_part; si no aparece, min_reps). Ese limite
+                    NO es un objetivo: es solo el borde de lo absurdo. No pongas
+                    la misma prescripcion a todos los ejercicios.
+                17. expected_duration_minutes debe ser lo que dura el contenido
+                    que prescribes, no una copia de session_minutes. El backend
+                    lo recalcula asi y rechaza un desvio mayor al 20 %:
                       minutos = 5 de calentamiento
                               + por ejercicio: series x repeticiones x 3 s
                                                (o series x segundos si es DURATION)
@@ -77,6 +79,27 @@ public class PlanPromptBuilder {
                               + 1 minuto de transicion entre ejercicios
                     Declara lo que de verdad dura. Inflarlo NO ayuda: distorsiona
                     la medicion de adherencia y invalida el plan igual.
+                    Si constraints.min_session_minutes no es null, cada sesion
+                    debe durar al menos eso: la persona reservo ese tiempo. Llega
+                    con ejercicios o series, no con descanso: rest_seconds nunca
+                    supera constraints.max_rest_seconds.
+                18. Recuperacion entre dias consecutivos: el mismo exercise_id
+                    no se repite en dos dias seguidos, y chest, back, shoulders y
+                    upper legs no se trabajan dos dias seguidos. Con dias
+                    seguidos alterna tren superior e inferior (o empuje y
+                    traccion). waist, upper arms y lower legs si pueden repetirse.
+                19. Si adjustment.types incluye REDUCE_VOLUME, cada ejercicio de
+                    constraints.reduce_volume_caps no puede superar su max_sets ni
+                    su max_reps. reason HOLD: la persona no lo completo o le costo;
+                    no lo subas. reason COMPLETED: lo hizo bien; puede progresar
+                    un poco, hasta el tope. El volumen total igual debe bajar: si
+                    te falta volumen, anade ejercicios nuevos del enfoque en vez de
+                    subir los repetidos. Antes de responder, revisa uno por uno los
+                    exercise_id de esa lista que uses.
+                20. En PUSH, de upper arms solo ejercicios de triceps; en PULL, solo
+                    de biceps. Mira target_muscle de cada ejercicio.
+                21. Si constraints.min_reps_for_level no es null, ningun planned_reps
+                    baja de ese valor (ademas del minimo de su body_part).
                 available_exercises viene agrupado por body_part y mezclado dentro
                 de cada grupo: NO tomes los primeros de la lista. Lee el body_part
                 de cada uno y elige a proposito.
@@ -102,8 +125,10 @@ public class PlanPromptBuilder {
                 total_volume debe ser la suma real de tus prescripciones: el backend la
                 recalcula y rechaza la propuesta si no coincide.
 
-                rationale se le muestra al usuario para explicarle el cambio: escribelo en
-                espanol, en segunda persona, breve y concreto.
+                rationale se le muestra al usuario: escribelo en espanol, en segunda persona,
+                breve y concreto. Si adjustment.target_volume no es null, di con
+                claridad si el volumen sube, baja o se mantiene y por que (usa
+                adjustment.reason). Nunca digas que se mantiene si baja o sube.
                 """);
 
         // Los principios van despues de las reglas verificables y antes de los

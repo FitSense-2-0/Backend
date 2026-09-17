@@ -38,11 +38,19 @@ class VolumeReducer {
         if (adjustment == null || !adjustment.isActive()) return draft;
 
         var current = applyDuration(draft, adjustment, context);
-        current = reduceReps(current, adjustment);
-        if (isWithinTarget(current, adjustment)) return current;
-
+        // Orden: primero SERIES (hasta 2), despues repeticiones (hasta el minimo
+        // de zona y nivel), por ultimo quitar ejercicios. Antes eran primero las
+        // repeticiones y todo terminaba en 3x6, incoherente para una
+        // principiante; 2 series es ademas lo que pide el principio 5.
         current = reduceSets(current, adjustment);
         if (isWithinTarget(current, adjustment)) return current;
+        // Por debajo del minimo, seguir recortando solo empeora: el reductor no
+        // sabe subir volumen. Se entrega tal cual y V8 decide.
+        if (current.volume(durationToRepsDivisor) < adjustment.targetVolumeMin()) return current;
+
+        current = reduceReps(current, adjustment, context);
+        if (isWithinTarget(current, adjustment)) return current;
+        if (current.volume(durationToRepsDivisor) < adjustment.targetVolumeMin()) return current;
 
         return removeExercises(current, adjustment);
     }
@@ -69,30 +77,88 @@ class VolumeReducer {
         return replaceWorkouts(draft, workouts);
     }
 
-    private PlanDraft reduceReps(PlanDraft draft, PlanAdjustment adjustment) {
-        int target = adjustment.targetVolume();
-        int current = draft.volume(durationToRepsDivisor);
-        if (current <= target) return draft;
+    /**
+     * Baja repeticiones DE A UNA, siempre en el ejercicio con mas margen sobre
+     * su minimo, hasta quedar dentro del maximo de la banda.
+     * <p>
+     * Antes aplicaba un unico factor a todos (reps x objetivo/actual). Con
+     * minimos por zona (gemelos no bajan de 12) el factor no alcanzaba, la
+     * reduccion de series entraba a cortar TODAS las series a la vez y la
+     * semana caia muy por debajo de la banda: 540 -> 308 con objetivo 432.
+     * Paso a paso, el volumen baja en saltos del tamano de las series de un
+     * ejercicio y se detiene en cuanto entra.
+     */
+    private PlanDraft reduceReps(PlanDraft draft, PlanAdjustment adjustment,
+                                 PlanGenerationContext context) {
+        var bodyParts = new java.util.HashMap<Long, String>();
+        context.availableExercises().forEach(c -> bodyParts.put(c.exerciseId(), c.bodyPartCode()));
+        var limites = context.prescription() == null ? null : context.prescription().repLimits();
 
-        double factor = (double) target / current;
-
-        return mapExercises(draft, exercise -> {
-            if (exercise.prescriptionType() != PrescriptionType.SETS_REPS
-                    || exercise.plannedReps() == null) return exercise;
-
-            short reps = (short) Math.max(MIN_REPS, Math.round(exercise.plannedReps() * factor));
-            return withSetsReps(exercise, exercise.plannedSets(), reps);
-        });
+        var workouts = mutableCopy(draft);
+        while (volumeOf(draft, workouts) > adjustment.targetVolumeMax()) {
+            int[] best = null;
+            int bestMargin = 0;
+            for (int w = 0; w < workouts.size(); w++) {
+                for (int e = 0; e < workouts.get(w).size(); e++) {
+                    var exercise = workouts.get(w).get(e);
+                    if (exercise.prescriptionType() != PrescriptionType.SETS_REPS
+                            || exercise.plannedReps() == null) continue;
+                    // Nunca bajo el minimo de su zona (migracion V20).
+                    int minimo = Math.max(MIN_REPS, limites == null ? MIN_REPS
+                            : limites.minRepsFor(bodyParts.get(exercise.exerciseId()),
+                            context.profile().fitnessLevel()));
+                    int margin = exercise.plannedReps() - minimo;
+                    if (margin > bestMargin) { bestMargin = margin; best = new int[]{w, e}; }
+                }
+            }
+            if (best == null) break;
+            var exercise = workouts.get(best[0]).get(best[1]);
+            workouts.get(best[0]).set(best[1],
+                    withSetsReps(exercise, exercise.plannedSets(), (short) (exercise.plannedReps() - 1)));
+        }
+        return rebuild(draft, workouts);
     }
 
+    /** Igual que las repeticiones: una serie cada vez, en el ejercicio con mas series. */
     private PlanDraft reduceSets(PlanDraft draft, PlanAdjustment adjustment) {
-        return mapExercises(draft, exercise -> {
-            if (exercise.prescriptionType() != PrescriptionType.SETS_REPS
-                    || exercise.plannedSets() == null) return exercise;
+        var workouts = mutableCopy(draft);
+        while (volumeOf(draft, workouts) > adjustment.targetVolumeMax()) {
+            int[] best = null;
+            int bestSets = MIN_SETS;
+            for (int w = 0; w < workouts.size(); w++) {
+                for (int e = 0; e < workouts.get(w).size(); e++) {
+                    var exercise = workouts.get(w).get(e);
+                    if (exercise.prescriptionType() != PrescriptionType.SETS_REPS
+                            || exercise.plannedSets() == null) continue;
+                    if (exercise.plannedSets() > bestSets) { bestSets = exercise.plannedSets(); best = new int[]{w, e}; }
+                }
+            }
+            if (best == null) break;
+            var exercise = workouts.get(best[0]).get(best[1]);
+            workouts.get(best[0]).set(best[1],
+                    withSetsReps(exercise, (short) (exercise.plannedSets() - 1), exercise.plannedReps()));
+        }
+        return rebuild(draft, workouts);
+    }
 
-            short sets = (short) Math.max(MIN_SETS, exercise.plannedSets() - 1);
-            return withSetsReps(exercise, sets, exercise.plannedReps());
-        });
+    private static List<List<PlanDraft.DraftExercise>> mutableCopy(PlanDraft draft) {
+        var copy = new ArrayList<List<PlanDraft.DraftExercise>>();
+        draft.workouts().forEach(workout -> copy.add(new ArrayList<>(workout.exercises())));
+        return copy;
+    }
+
+    private int volumeOf(PlanDraft template, List<List<PlanDraft.DraftExercise>> workouts) {
+        return rebuild(template, workouts).volume(durationToRepsDivisor);
+    }
+
+    private PlanDraft rebuild(PlanDraft template, List<List<PlanDraft.DraftExercise>> exercises) {
+        var workouts = new ArrayList<PlanDraft.DraftWorkout>();
+        for (int i = 0; i < template.workouts().size(); i++) {
+            var workout = template.workouts().get(i);
+            workouts.add(new PlanDraft.DraftWorkout(workout.scheduledDate(), workout.focus(), workout.name(),
+                    workout.expectedDurationMinutes(), List.copyOf(exercises.get(i))));
+        }
+        return replaceWorkouts(template, workouts);
     }
 
     /**
@@ -102,30 +168,21 @@ class VolumeReducer {
      * prescindible del enfoque.
      */
     private PlanDraft removeExercises(PlanDraft draft, PlanAdjustment adjustment) {
-        var current = draft;
-        for (int round = 0; round < 4; round++) {
-            if (isWithinTarget(current, adjustment)) return current;
-
-            var workouts = new ArrayList<PlanDraft.DraftWorkout>();
-            boolean removedAny = false;
-
-            for (var workout : current.workouts()) {
-                if (workout.exercises().size() > MIN_EXERCISES) {
-                    var trimmed = new ArrayList<>(workout.exercises());
-                    trimmed.remove(trimmed.size() - 1);
-                    workouts.add(new PlanDraft.DraftWorkout(workout.scheduledDate(),
-                            workout.focus(), workout.name(),
-                            workout.expectedDurationMinutes(), List.copyOf(trimmed)));
-                    removedAny = true;
-                } else {
-                    workouts.add(workout);
-                }
+        // De a UN ejercicio, siempre de la sesion con mas ejercicios, y se para
+        // en cuanto el volumen baja del maximo. Antes quitaba uno por sesion por
+        // ronda y seguia aunque ya estuviera por debajo del minimo: una semana
+        // con objetivo 266 terminaba en 144.
+        var workouts = mutableCopy(draft);
+        while (volumeOf(draft, workouts) > adjustment.targetVolumeMax()) {
+            int target = -1;
+            for (int w = 0; w < workouts.size(); w++) {
+                if (workouts.get(w).size() <= MIN_EXERCISES) continue;
+                if (target < 0 || workouts.get(w).size() > workouts.get(target).size()) target = w;
             }
-
-            current = replaceWorkouts(current, workouts);
-            if (!removedAny) break;
+            if (target < 0) break;
+            workouts.get(target).remove(workouts.get(target).size() - 1);
         }
-        return current;
+        return rebuild(draft, workouts);
     }
 
     // ---------------------------------------------------------------- helpers

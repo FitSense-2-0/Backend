@@ -116,7 +116,7 @@ BEGIN
 SELECT COUNT(*) INTO activas FROM calculation_configs WHERE is_active;
 
 SELECT (params -> 'prescription') ? 'rep_limits',
-    (params -> 'prescription') ? 'by_goal'
+        (params -> 'prescription') ? 'by_goal'
 INTO tiene_limites, tiene_by_goal
 FROM calculation_configs WHERE is_active;
 
@@ -125,7 +125,7 @@ FROM exercises
 WHERE is_active AND default_prescription = 'DURATION' AND name_en ~* '\ycrunch\y';
 
 SELECT COUNT(*) FILTER (WHERE default_prescription = 'DURATION'),
-    COUNT(*) FILTER (WHERE default_prescription = 'SETS_REPS')
+        COUNT(*) FILTER (WHERE default_prescription = 'SETS_REPS')
 INTO activos_duracion, activos_reps
 FROM exercises WHERE is_active;
 

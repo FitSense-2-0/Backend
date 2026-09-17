@@ -73,7 +73,14 @@ public class UserInterventionCommandServiceImpl implements UserInterventionComma
         int divisor = limits.durationToRepsDivisor();
 
         var profile = externalProfilingService.fetchProfile(command.userId());
-        int previousDays = profile.map(p -> (int) p.daysPerWeek()).orElse(limits.minDaysPerWeek());
+        // Base de REDUCE_DAYS: las sesiones que de verdad se planificaron, con el
+        // tope por nivel de la division semanal (principiante 4, resto 6; ver
+        // PlanGenerationContext.effectiveDaysPerWeek). Sin el tope, una
+        // principiante con 6 dias recibiria "reducir a 5" y seguiria en 4: la
+        // orden no tendria efecto.
+        int previousDays = profile.map(p -> Math.min(p.daysPerWeek(),
+                        "BEGINNER".equals(p.fitnessLevel()) ? 4 : 6))
+                .orElse(limits.minDaysPerWeek());
         int previousMinutes = profile.map(p -> (int) p.sessionMinutes())
                 .orElse(limits.minSessionMinutes());
         int previousDifficulty = profile.map(p -> p.maxDifficultyLevel()).orElse(2);

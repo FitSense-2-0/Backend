@@ -36,9 +36,17 @@ public record PlanGenerationContext(
      * <p>
      * P-1.2 no cambia el formato: solo el texto de principios y V11.
      * <p>
+     * GEN-IN-1.3 (migracion V20): constraints suma min_session_minutes y
+     * max_rest_seconds, y rep_limits suma min_reps_by_body_part.
+     * <p>
+     * GEN-IN-1.4: suggested_split (fecha y enfoque por sesion) y target_muscle en
+     * cada ejercicio; days_per_week ya viene con el tope por nivel.
+     * <p>
+     * GEN-IN-1.5: reduce_volume_caps y min_reps_for_level en constraints.
+     * <p>
      * Los snapshots antiguos siguen siendo legibles con su version.
      */
-    public static final String SCHEMA_VERSION = "GEN-IN-1.2";
+    public static final String SCHEMA_VERSION = "GEN-IN-1.5";
 
     /**
      * Dificultad maxima efectiva: la del perfil, salvo que el ajuste ordene
@@ -50,10 +58,30 @@ public record PlanGenerationContext(
         return profile.maxDifficultyLevel();
     }
 
+    /** Tope de sesiones de fuerza por semana segun nivel (division semanal, P3). */
+    public static final int MAX_SESSIONS_BEGINNER = 4;
+    public static final int MAX_SESSIONS_OTHERS = 6;
+
+    /**
+     * Sesiones de la semana: las del perfil (o las forzadas por REDUCE_DAYS),
+     * con tope por nivel. ACSM 2009 recomienda 2-3 dias para principiantes y
+     * nadie recibe 7 dias de fuerza sin descanso. Una principiante que marca 6
+     * dias recibe 4; la adherencia se mide contra lo planificado, asi que no la
+     * penaliza.
+     */
     public int effectiveDaysPerWeek() {
-        if (adjustment != null && adjustment.forcedDaysPerWeek() != null)
-            return adjustment.forcedDaysPerWeek();
-        return profile.daysPerWeek();
+        int requested = adjustment != null && adjustment.forcedDaysPerWeek() != null
+                ? adjustment.forcedDaysPerWeek() : profile.daysPerWeek();
+        int cap = "BEGINNER".equals(profile.fitnessLevel()) ? MAX_SESSIONS_BEGINNER : MAX_SESSIONS_OTHERS;
+        return Math.min(requested, cap);
+    }
+
+    /** Division sugerida para la semana, igual para IA, motor de reglas y validador. */
+    public java.util.List<main.web.services.fitsense.planning.domain.services.WeeklySplitPlanner.PlannedSession>
+    suggestedSplit() {
+        int sessions = Math.min(effectiveDaysPerWeek(), profile.availableDays().size());
+        return main.web.services.fitsense.planning.domain.services.WeeklySplitPlanner.plan(
+                weekStartDate, profile.availableDays(), sessions, weekNumber);
     }
 
     public int effectiveSessionMinutes() {
