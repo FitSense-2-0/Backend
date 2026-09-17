@@ -14,6 +14,19 @@ import java.util.List;
 @Component
 public class PlanPromptBuilder {
 
+    /**
+     * Version del texto de reglas. Viaja en input_snapshot.prompt_version.
+     * <p>
+     * PR-1.0 (GEN-IN-1.6): primera version con numero. Respecto al texto
+     * anterior: las reglas 9, 16 y 21 se unen en una sobre min_reps por
+     * ejercicio (la 9 decia todavia "minimo 6 repeticiones" y contradecia a la
+     * 16 y la 21); el reintento incluye la propuesta rechazada y va despues de
+     * los datos, con instruccion de corregirla y no rehacerla.
+     * <p>
+     * Cambiar cualquier texto de este archivo exige subir la version.
+     */
+    public static final String VERSION = "PR-1.0";
+
     private final JsonSupport jsonSupport;
 
     public PlanPromptBuilder(JsonSupport jsonSupport) {
@@ -21,7 +34,7 @@ public class PlanPromptBuilder {
     }
 
     public String build(PlanGenerationContext context, String inputSnapshotJson,
-                        List<String> previousProblems) {
+                        AiRetryFeedback feedback) {
         var prompt = new StringBuilder();
 
         prompt.append("""
@@ -44,7 +57,7 @@ public class PlanPromptBuilder {
                     y target_volume_max. Volumen = planned_sets x planned_reps, o
                     planned_duration_seconds x planned_sets / 30 para los de duracion.
                     La carga NO cuenta como volumen.
-                9.  Minimo 2 series y 6 repeticiones por ejercicio.
+                9.  Minimo 2 series por ejercicio SETS_REPS. Las repeticiones, en la regla 16.
                 10. Minimo 20 segundos en los ejercicios de duracion.
                 11. target_load_kg sigue el principio 8. Sin peso anotado la semana
                     anterior va en null; nunca sube mas de un 10 % sobre el peso
@@ -63,12 +76,13 @@ public class PlanPromptBuilder {
                     enfoque admite (3 si la sesion lo permite), y que ningun
                     grupo se lleve mas de la mitad de la sesion.
                 16. Las repeticiones las decides tu, ejercicio por ejercicio,
-                    con los PRINCIPIOS DE PRESCRIPCION de mas abajo. El backend
-                    verifica constraints.rep_limits: ningun planned_reps por
-                    encima de max_reps ni por debajo del minimo de su body_part
-                    (min_reps_by_body_part; si no aparece, min_reps). Ese limite
-                    NO es un objetivo: es solo el borde de lo absurdo. No pongas
-                    la misma prescripcion a todos los ejercicios.
+                    con los PRINCIPIOS DE PRESCRIPCION de mas abajo. Cada ejercicio
+                    de available_exercises trae su min_reps: planned_reps nunca
+                    baja de ese numero ni supera constraints.max_reps. min_reps ya
+                    tiene en cuenta la zona y el nivel de la persona: usalo tal
+                    cual, no lo recalcules. Ese limite NO es un objetivo: es solo
+                    el borde de lo absurdo. No pongas la misma prescripcion a todos
+                    los ejercicios.
                 17. expected_duration_minutes debe ser lo que dura el contenido
                     que prescribes, no una copia de session_minutes. El backend
                     lo recalcula asi y rechaza un desvio mayor al 20 %:
@@ -98,8 +112,6 @@ public class PlanPromptBuilder {
                     exercise_id de esa lista que uses.
                 20. En PUSH, de upper arms solo ejercicios de triceps; en PULL, solo
                     de biceps. Mira target_muscle de cada ejercicio.
-                21. Si constraints.min_reps_for_level no es null, ningun planned_reps
-                    baja de ese valor (ademas del minimo de su body_part).
                 available_exercises viene agrupado por body_part y mezclado dentro
                 de cada grupo: NO tomes los primeros de la lista. Lee el body_part
                 de cada uno y elige a proposito.
@@ -137,14 +149,49 @@ public class PlanPromptBuilder {
         // PrescriptionPrinciples; la version queda en input_snapshot.
         prompt.append('\n').append(PrescriptionPrinciples.TEXT);
 
-        if (!previousProblems.isEmpty()) {
-            // Segundo intento: la lista de incumplimientos es lo unico que
-            // distingue este intento del anterior (19.4).
-            prompt.append("\nTu propuesta anterior fue rechazada por estos motivos. Corrigelos:\n");
-            previousProblems.forEach(problem -> prompt.append("- ").append(problem).append('\n'));
+        prompt.append("\nDatos de entrada:\n").append(inputSnapshotJson).append('\n');
+
+        // Reintento (19.4). Va AL FINAL, despues de los datos: es lo ultimo que
+        // lee el modelo y lo unico que distingue este intento del anterior.
+        if (feedback != null && !feedback.isEmpty()) appendRetry(prompt, feedback);
+
+        return prompt.toString();
+    }
+
+    private void appendRetry(StringBuilder prompt, AiRetryFeedback feedback) {
+        boolean conPropuesta = feedback.rejectedOutput() != null && !feedback.rejectedOutput().isBlank();
+
+        if (conPropuesta) {
+            prompt.append("""
+
+                    INTENTO ANTERIOR RECHAZADO
+                    Esta fue tu propuesta anterior:
+                    """).append(feedback.rejectedOutput().strip()).append('\n');
+        } else {
+            prompt.append("\nINTENTO ANTERIOR RECHAZADO\n");
         }
 
-        prompt.append("\nDatos de entrada:\n").append(inputSnapshotJson);
-        return prompt.toString();
+        if (!feedback.rejectionProblems().isEmpty()) {
+            prompt.append("\nEl backend la rechazo por estos motivos:\n");
+            feedback.rejectionProblems().forEach(problem -> prompt.append("- ").append(problem).append('\n'));
+        }
+        if (!feedback.earlierProblems().isEmpty()) {
+            prompt.append("\nErrores de intentos anteriores que tampoco puedes repetir:\n");
+            feedback.earlierProblems().forEach(problem -> prompt.append("- ").append(problem).append('\n'));
+        }
+
+        prompt.append(conPropuesta ? """
+
+                Devuelve la propuesta COMPLETA corregida, partiendo de la anterior:
+                cambia solo lo necesario para resolver cada motivo y conserva lo que
+                ya estaba bien. Si un motivo nombra un exercise_id, corrige ese
+                ejercicio. Si una sesion no llega al minimo de minutos, anadele un
+                ejercicio o una serie en vez de rehacerla. Antes de responder,
+                comprueba cada motivo contra tu nueva propuesta.
+                """ : """
+
+                Corrige cada motivo. Antes de responder, comprueba cada uno contra tu
+                nueva propuesta.
+                """);
     }
 }

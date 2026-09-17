@@ -7,7 +7,7 @@ import java.util.*;
 
 /**
  * Seleccion de ejercicios de 20.3: al menos uno de cada body_part del enfoque,
- * y el resto repartido por turnos entre esos mismos grupos.
+ * y el resto repartido entre esos mismos grupos.
  * <p>
  * DESVIACION DOCUMENTADA: el 20.3 dice "se completa al azar". Ya no. El azar
  * dentro del enfoque concentraba en el grupo mas poblado del catalogo —waist
@@ -15,8 +15,37 @@ import java.util.*;
  * LOWER_BODY cayera sistematicamente por la regla de la mitad de V15. El
  * respaldo determinista incumplia las mismas validaciones que el generador al
  * que respalda, asi que dejaba al participante sin plan.
+ * <p>
+ * PRIORIDAD POR GRUPO (criterio de diseno provisional, plan 29). El reparto por
+ * turnos trataba igual a todos los grupos del enfoque: para llegar a la
+ * duracion minima, un LOWER_BODY de 8 ejercicios salio con 3 de muslo, 3 de
+ * gemelos y 2 de abdomen, y sin sentadilla. Ahora:
+ * <ul>
+ *   <li>Grupos grandes (chest, back, shoulders, upper legs) pesan el doble que
+ *       los pequenos al repartir: reciben unos dos ejercicios por cada uno de
+ *       un grupo pequeno. A igualdad de proporcion va primero el pequeno.</li>
+ *   <li>Grupos pequenos con tope por sesion: lower legs 1, waist 2, upper arms 2.
+ *       El tope solo aplica si el enfoque tiene algun grupo grande (CORE no).</li>
+ *   <li>Si con esos topes no se puede completar, se relajan los topes de los
+ *       grupos pequenos, nunca la regla de la mitad de V15: tener plan sigue
+ *       siendo obligatorio.</li>
+ * </ul>
+ * body_part es una aproximacion. Se reemplaza por la categoria de movimiento
+ * cuando el catalogo este clasificado.
  */
 class ExerciseSelector {
+
+    /** Grupos grandes: pesan el doble al repartir y no tienen tope propio. */
+    static final Set<String> MAJOR_GROUPS = Set.of("chest", "back", "shoulders", "upper legs");
+
+    /** Tope por sesion de los grupos pequenos (provisional, criterio de diseno). */
+    static final Map<String, Integer> MAX_PER_SESSION = Map.of(
+            "lower legs", 1,
+            "waist", 2,
+            "upper arms", 2);
+
+    private static final int MAJOR_WEIGHT = 2;
+    private static final int MINOR_WEIGHT = 1;
 
     private final Map<String, List<CandidateExercise>> byBodyPart = new LinkedHashMap<>();
     private final List<CandidateExercise> all;
@@ -46,32 +75,44 @@ class ExerciseSelector {
                 .add(candidate));
     }
 
+    static boolean isMajor(String bodyPartCode) {
+        return bodyPartCode != null && MAJOR_GROUPS.contains(bodyPartCode);
+    }
+
     List<CandidateExercise> pick(WorkoutFocus focus, int count) {
         var picked = new LinkedHashSet<CandidateExercise>();
-        var grupos = List.copyOf(focus.bodyPartCodes());
+        var grupos = focus.bodyPartCodes();
 
         // V15 rechaza cuando un grupo supera la mitad de la sesion (division
         // entera), y solo si el enfoque abarca 3 o mas grupos y la sesion tiene
         // 4 o mas ejercicios. Fuera de ese caso no hay tope que respetar.
-        int tope = (grupos.size() >= 3 && count >= 4) ? count / 2 : count;
+        int tope = halfCap(grupos, count);
+        var porGrupo = new HashMap<String, Integer>();
 
-        var porGrupo = new LinkedHashMap<String, Integer>();
-        grupos.forEach(code -> porGrupo.put(code, 0));
+        // 1. Cobertura (20.3): uno de cada grupo, los grandes primero. Si la
+        //    sesion es mas corta que el numero de grupos, quedan fuera los
+        //    pequenos, no los grandes.
+        var cobertura = grupos.stream()
+                .sorted(Comparator.comparing((String code) -> isMajor(code) ? 0 : 1)
+                        .thenComparingInt(grupos::indexOf))
+                .toList();
+        for (var code : cobertura) {
+            if (picked.size() >= count) break;
+            if (porGrupo.getOrDefault(code, 0) + 1 > tope) continue;
+            var candidate = pickOneFrom(pool(code, focus), picked);
+            if (candidate.isEmpty()) continue;
+            picked.add(candidate.get());
+            porGrupo.merge(code, 1, Integer::sum);
+        }
 
-        // Reparto por turnos. Con n ejercicios sobre k grupos ninguno pasa de
-        // ceil(n/k), que para todos los enfoques de 3+ grupos cae dentro del
-        // tope: LOWER_BODY con 5 sale 2+2+1, que es la unica reparticion legal.
-        boolean progreso = true;
-        while (picked.size() < count && progreso) {
-            progreso = false;
-            for (var code : grupos) {
-                if (picked.size() >= count) break;
-                if (porGrupo.get(code) >= tope) continue;
-                var candidate = pickOneFrom(pool(code, focus), picked);
-                if (candidate.isEmpty()) continue;
-                picked.add(candidate.get());
-                porGrupo.merge(code, 1, Integer::sum);
-                progreso = true;
+        // 2. Resto por prioridad: primero con los topes de grupos pequenos y,
+        //    solo si no alcanza, sin ellos.
+        for (boolean respetarTopes : new boolean[]{true, false}) {
+            while (picked.size() < count) {
+                var next = next(focus, picked, porGrupo, tope, respetarTopes);
+                if (next.isEmpty()) break;
+                picked.add(next.get());
+                porGrupo.merge(next.get().bodyPartCode(), 1, Integer::sum);
             }
         }
 
@@ -96,25 +137,55 @@ class ExerciseSelector {
      * Un ejercicio mas para una sesion ya armada, respetando lo que V15 exige:
      * grupos del enfoque y ninguno por encima de la mitad. Lo usa el motor de
      * reglas para llegar a la duracion minima (V20) con trabajo, no con pausas.
+     *
+     * @param respetarTopes false solo como ultimo recurso, cuando con los topes
+     *                      de grupos pequenos la sesion no llega al minimo
      */
-    Optional<CandidateExercise> pickAdditional(WorkoutFocus focus, List<CandidateExercise> current) {
+    Optional<CandidateExercise> pickAdditional(WorkoutFocus focus, List<CandidateExercise> current,
+                                               boolean respetarTopes) {
         var picked = new LinkedHashSet<>(current);
-        var grupos = List.copyOf(focus.bodyPartCodes());
-        int total = current.size() + 1;
-        int tope = (grupos.size() >= 3 && total >= 4) ? total / 2 : total;
+        var porGrupo = new HashMap<String, Integer>();
+        current.forEach(candidate -> porGrupo.merge(candidate.bodyPartCode(), 1, Integer::sum));
+        int tope = halfCap(focus.bodyPartCodes(), current.size() + 1);
+        return next(focus, picked, porGrupo, tope, respetarTopes);
+    }
 
-        var porGrupo = new HashMap<String, Long>();
-        current.forEach(candidate -> porGrupo.merge(candidate.bodyPartCode(), 1L, Long::sum));
+    /**
+     * Siguiente ejercicio por prioridad: el grupo con menos ejercicios en
+     * proporcion a su peso; a igualdad, el pequeno antes que el grande (asi un
+     * tren superior de 8 lleva biceps y triceps en vez de un tercer pecho), y
+     * despues el orden del enfoque.
+     */
+    private Optional<CandidateExercise> next(WorkoutFocus focus, Set<CandidateExercise> picked,
+                                             Map<String, Integer> porGrupo, int tope,
+                                             boolean respetarTopes) {
+        var grupos = focus.bodyPartCodes();
+        boolean aplicanTopes = respetarTopes && grupos.stream().anyMatch(ExerciseSelector::isMajor);
 
         var ordenados = grupos.stream()
-                .sorted(Comparator.comparingLong(code -> porGrupo.getOrDefault(code, 0L)))
+                .sorted(Comparator.comparingDouble((String code) ->
+                                porGrupo.getOrDefault(code, 0) / (double) weight(code))
+                        .thenComparing(code -> isMajor(code) ? 1 : 0)
+                        .thenComparingInt(grupos::indexOf))
                 .toList();
+
         for (var code : ordenados) {
-            if (porGrupo.getOrDefault(code, 0L) + 1 > tope) continue;
+            int actuales = porGrupo.getOrDefault(code, 0);
+            if (actuales + 1 > tope) continue;
+            if (aplicanTopes && MAX_PER_SESSION.containsKey(code)
+                    && actuales + 1 > MAX_PER_SESSION.get(code)) continue;
             var candidate = pickOneFrom(pool(code, focus), picked);
             if (candidate.isPresent()) return candidate;
         }
         return Optional.empty();
+    }
+
+    private static int weight(String code) {
+        return isMajor(code) ? MAJOR_WEIGHT : MINOR_WEIGHT;
+    }
+
+    private static int halfCap(List<String> grupos, int sessionSize) {
+        return (grupos.size() >= 3 && sessionSize >= 4) ? sessionSize / 2 : sessionSize;
     }
 
     private void completarCon(List<CandidateExercise> pool,

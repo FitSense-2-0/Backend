@@ -57,11 +57,24 @@ public class ReplicateTrainingPlanGenerator implements TrainingPlanGenerator {
 
     @Override
     public PlanDraft generate(PlanGenerationContext context, List<String> previousProblems) {
+        return toDraft(requestOutput(context, AiRetryFeedback.ofProblems(previousProblems)));
+    }
+
+    /**
+     * Pide una propuesta y devuelve el JSON tal cual lo entrego el modelo. Va
+     * separado de {@link #toDraft(String)} para que el pipeline conserve la
+     * propuesta aunque luego se rechace: el reintento la necesita para
+     * corregirla (AiRetryFeedback).
+     */
+    public String requestOutput(PlanGenerationContext context, AiRetryFeedback feedback) {
         var snapshot = PlanInputSnapshot.of(context);
         var snapshotJson = jsonSupport.write(snapshot);
-        var prompt = promptBuilder.build(context, snapshotJson, previousProblems);
+        var prompt = promptBuilder.build(context, snapshotJson, feedback);
+        return call(prompt);
+    }
 
-        String output = call(prompt);
+    /** Convierte la salida del modelo en borrador. Lanza InvalidPlanDraftException si no se puede. */
+    public PlanDraft toDraft(String output) {
         return assembler.toDraft(output, properties.model());
     }
 
@@ -74,9 +87,11 @@ public class ReplicateTrainingPlanGenerator implements TrainingPlanGenerator {
 
         String rawBody = post(input);
 
-        // Traza temporal mientras se depura la integracion. Bajar a DEBUG antes
-        // del piloto: cada generacion vuelca varios KB al log.
-        log.info("Replicate respondio (crudo): {}", rawBody);
+        // Respuesta inicial de Replicate: repite el prompt entero (unos 160 KB con
+        // el catalogo) y casi siempre llega con status "starting" y output null,
+        // asi que no muestra el plan. Queda en DEBUG; la salida real del modelo
+        // se registra en INFO mas abajo, cuando la prediccion termina.
+        log.debug("Replicate respondio (crudo): {}", rawBody);
 
         var response = jsonSupport.read(rawBody, ReplicateResponse.class);
 
@@ -101,7 +116,15 @@ public class ReplicateTrainingPlanGenerator implements TrainingPlanGenerator {
             throw new AiProviderUnavailableException(detail);
         }
 
-        return response.joinedOutput();
+        String output = response.joinedOutput();
+
+        // Evidencia de cada intento, tambien de los rechazados: la proporcion de
+        // planes validos al primer intento es un resultado de la tesis y esta
+        // linea es lo que permite revisar QUE propuso el modelo cada vez.
+        log.info("Salida de la IA (prediccion {}, prompt {} {}, {} caracteres de prompt): {}",
+                response.id(), PlanPromptBuilder.VERSION, PrescriptionPrinciples.VERSION,
+                prompt.length(), output);
+        return output;
     }
 
     /**

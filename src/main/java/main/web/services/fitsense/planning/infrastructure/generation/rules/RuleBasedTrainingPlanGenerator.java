@@ -13,11 +13,25 @@ import java.util.*;
  * Generador determinista de la seccion 20. Es lo primero que se construye y
  * queda permanentemente como respaldo cuando la IA falla dos veces (19.4).
  * <p>
- * Es deliberadamente TONTO: reparte siempre igual, primero repeticiones, luego
- * series, y solo al final quita ejercicios. Esa previsibilidad no es una
- * limitacion, es la condicion de control del estudio: la diferencia entre este
- * reparto fijo y el que elige la IA segun lo que el usuario cumplio es
- * precisamente lo que la tesis compara.
+ * Es deliberadamente simple y predecible: sus reglas se pueden leer y
+ * reproducir. Ya NO es una condicion de control (el estudio es de un solo grupo,
+ * decision 6): es el respaldo que produce la semana cuando la IA falla. Por eso
+ * tiene que ser coherente para la persona, no solo valido. Las semanas que
+ * genere se reportan aparte y el analisis se repite sin ellas.
+ * <p>
+ * COHERENCIA (plan 29, criterio de diseno provisional):
+ * <ul>
+ *   <li>Repeticiones segun la zona: gemelos y abdomen llevan
+ *       {@value #SMALL_ZONE_EXTRA_REPS} mas que la base del objetivo
+ *       (principio 2: un ejercicio pequeno necesita mas repeticiones), nunca
+ *       bajo el minimo de zona y nivel ni sobre el maximo.</li>
+ *   <li>Para llegar a la duracion minima: primero ejercicios con los topes de
+ *       grupos pequenos (ExerciseSelector), luego 3 series en los ejercicios de
+ *       grupos grandes, luego en los pequenos y, solo si aun falta, ejercicios
+ *       sin esos topes.</li>
+ *   <li>En semana de reduccion, los ejercicios repetidos respetan los topes de
+ *       V19 antes de reducir el volumen.</li>
+ * </ul>
  * <p>
  * DESVIACION DOCUMENTADA: el 20.3 dice "elige ejercicios al azar". Aqui el azar
  * lleva semilla derivada de usuario y semana, no del reloj. La distribucion es
@@ -38,6 +52,17 @@ public class RuleBasedTrainingPlanGenerator implements TrainingPlanGenerator {
     private static final int SHORT_SESSION_MINUTES = 30;
     /** Tope al completar la duracion minima (V20). */
     private static final int MAX_EXERCISES_PER_SESSION = 8;
+
+    /** Series maximas al completar la duracion (ACSM 2009: 1-3 para principiantes). */
+    private static final short FILL_MAX_SETS = 3;
+
+    /**
+     * Repeticiones extra en zonas pequenas (lower legs, waist) sobre la base del
+     * objetivo. Criterio de diseno provisional, principio 2; se reemplaza con la
+     * categoria de movimiento del catalogo.
+     */
+    static final int SMALL_ZONE_EXTRA_REPS = 3;
+    private static final Set<String> SMALL_ZONES = Set.of("lower legs", "waist");
 
 
     /** 20.4: los de duracion van 3 series de 40 segundos con 45 de descanso. */
@@ -106,29 +131,20 @@ public class RuleBasedTrainingPlanGenerator implements TrainingPlanGenerator {
             }
 
             // V20: sin orden de volumen, la sesion llega al minimo de minutos
-            // anadiendo ejercicios del enfoque, nunca alargando descansos.
+            // con trabajo, nunca alargando descansos. Orden (plan 29): ejercicios
+            // con topes de grupos pequenos -> 3 series en grupos grandes -> 3
+            // series en pequenos -> ejercicios sin topes -> 3 series en esos.
             if (minimumMinutes > 0 && context.prescription() != null) {
-                while (exercises.size() < MAX_EXERCISES_PER_SESSION
-                        && durationEstimator.estimateMinutes(new PlanDraft.DraftWorkout(dates.get(i), focus,
-                        nameOf(focus), sessionMinutes, exercises), context.prescription()) < minimumMinutes) {
-                    var extra = selector.pickAdditional(focus, picked);
-                    if (extra.isEmpty()) break;
-                    picked.add(extra.get());
-                    exercises.add(toDraftExercise(extra.get(), prescription, context));
-                }
-                // Si con el tope de ejercicios no llega (principiante a 2 series
-                // con 60 minutos), sube a 3 series de a un ejercicio: ACSM 2009
-                // admite 1-3 series para principiantes.
-                for (int k = 0; k < exercises.size()
-                        && durationEstimator.estimateMinutes(new PlanDraft.DraftWorkout(dates.get(i), focus,
-                        nameOf(focus), sessionMinutes, exercises), context.prescription()) < minimumMinutes; k++) {
-                    var e = exercises.get(k);
-                    if (e.prescriptionType() == PrescriptionType.SETS_REPS && e.plannedSets() != null
-                            && e.plannedSets() < 3)
-                        exercises.set(k, new PlanDraft.DraftExercise(e.exerciseId(), e.prescriptionType(),
-                                (short) 3, e.plannedReps(), e.plannedDurationSeconds(), e.targetLoadKg(),
-                                e.restSeconds(), e.notes()));
-                }
+                var date = dates.get(i);
+                java.util.function.BooleanSupplier falta = () -> durationEstimator.estimateMinutes(
+                        new PlanDraft.DraftWorkout(date, focus, nameOf(focus), sessionMinutes, exercises),
+                        context.prescription()) < minimumMinutes;
+
+                addUntilMinimum(selector, focus, picked, exercises, prescription, context, falta, true);
+                raiseSetsUntilMinimum(picked, exercises, falta, true);
+                raiseSetsUntilMinimum(picked, exercises, falta, false);
+                addUntilMinimum(selector, focus, picked, exercises, prescription, context, falta, false);
+                raiseSetsUntilMinimum(picked, exercises, falta, false);
             }
 
             // V4/V17: si el contenido supera el techo del perfil, se quitan
@@ -155,8 +171,76 @@ public class RuleBasedTrainingPlanGenerator implements TrainingPlanGenerator {
         // El ajuste se aplica sobre el borrador ya armado, no durante la
         // seleccion: asi el reparto de 20.5 opera sobre el mismo plan base que
         // se habria generado sin ajuste, y la reduccion es comparable.
-        var adjusted = new VolumeReducer(durationToRepsDivisor).apply(draft, context);
+        // V19: los ejercicios repetidos no superan su tope antes de reducir. El
+        // plan base se arma sin mirar la semana anterior, asi que podia subir
+        // series (al completar la duracion) o repeticiones (zona) de algo que
+        // la persona no completo, y V19 dejaba la semana sin plan.
+        var capped = applyReductionCaps(draft, context);
+        var adjusted = new VolumeReducer(durationToRepsDivisor).apply(capped, context);
         return withRationale(withEstimatedDurations(adjusted, context), context);
+    }
+
+    // ------------------------------------------------------------ duracion (V20)
+
+    private void addUntilMinimum(ExerciseSelector selector, WorkoutFocus focus,
+                                 List<CandidateExercise> picked,
+                                 List<PlanDraft.DraftExercise> exercises,
+                                 Prescription prescription, PlanGenerationContext context,
+                                 java.util.function.BooleanSupplier falta, boolean respetarTopes) {
+        while (exercises.size() < MAX_EXERCISES_PER_SESSION && falta.getAsBoolean()) {
+            var extra = selector.pickAdditional(focus, picked, respetarTopes);
+            if (extra.isEmpty()) return;
+            picked.add(extra.get());
+            exercises.add(toDraftExercise(extra.get(), prescription, context));
+        }
+    }
+
+    /**
+     * Sube a {@value #FILL_MAX_SETS} series, de a un ejercicio y en orden, hasta
+     * llegar al minimo. picked y exercises van en paralelo (mismo indice).
+     */
+    private void raiseSetsUntilMinimum(List<CandidateExercise> picked,
+                                       List<PlanDraft.DraftExercise> exercises,
+                                       java.util.function.BooleanSupplier falta, boolean soloGrandes) {
+        for (int k = 0; k < exercises.size() && falta.getAsBoolean(); k++) {
+            if (soloGrandes && !ExerciseSelector.isMajor(picked.get(k).bodyPartCode())) continue;
+            var e = exercises.get(k);
+            if (e.prescriptionType() == PrescriptionType.SETS_REPS && e.plannedSets() != null
+                    && e.plannedSets() < FILL_MAX_SETS)
+                exercises.set(k, new PlanDraft.DraftExercise(e.exerciseId(), e.prescriptionType(),
+                        FILL_MAX_SETS, e.plannedReps(), e.plannedDurationSeconds(), e.targetLoadKg(),
+                        e.restSeconds(), e.notes()));
+        }
+    }
+
+    // ------------------------------------------------------------ reduccion (V19)
+
+    /**
+     * Baja series y repeticiones de los ejercicios repetidos hasta su tope de
+     * V19 (PlanDraftValidator.reductionCaps). Sin REDUCE_VOLUME no hay topes y
+     * devuelve el borrador tal cual. Solo baja: nunca sube nada.
+     */
+    private PlanDraft applyReductionCaps(PlanDraft draft, PlanGenerationContext context) {
+        var caps = main.web.services.fitsense.planning.domain.services.PlanDraftValidator.reductionCaps(context);
+        if (caps.isEmpty()) return draft;
+
+        var workouts = draft.workouts().stream()
+                .map(workout -> new PlanDraft.DraftWorkout(workout.scheduledDate(), workout.focus(),
+                        workout.name(), workout.expectedDurationMinutes(),
+                        workout.exercises().stream().map(e -> {
+                            var cap = caps.get(e.exerciseId());
+                            if (cap == null || e.prescriptionType() != PrescriptionType.SETS_REPS
+                                    || e.plannedSets() == null || e.plannedReps() == null) return e;
+                            short sets = (short) Math.min(e.plannedSets(), cap.maxSets());
+                            short reps = (short) Math.min(e.plannedReps(), cap.maxReps());
+                            if (sets == e.plannedSets() && reps == e.plannedReps()) return e;
+                            return new PlanDraft.DraftExercise(e.exerciseId(), e.prescriptionType(),
+                                    sets, reps, e.plannedDurationSeconds(), e.targetLoadKg(),
+                                    e.restSeconds(), e.notes());
+                        }).toList()))
+                .toList();
+        return new PlanDraft(draft.source(), draft.modelName(), draft.planName(),
+                draft.declaredTotalVolume(), draft.rationale(), workouts);
     }
 
     // ------------------------------------------------------------------- 20.4
@@ -183,8 +267,14 @@ public class RuleBasedTrainingPlanGenerator implements TrainingPlanGenerator {
         // repeticiones para fuerza, y 6 elevaciones de talon no son coherentes.
         var limites = context.prescription() == null ? null : context.prescription().repLimits();
         String level = context.profile().fitnessLevel();
-        short reps = limites == null ? prescription.reps()
-                : (short) Math.max(prescription.reps(), limites.minRepsFor(candidate.bodyPartCode(), level));
+        // Zona pequena (gemelos, abdomen): unas repeticiones mas que la base
+        // (principio 2). Sin esto todo el plan 29 salio a 12.
+        int base = prescription.reps()
+                + (SMALL_ZONES.contains(candidate.bodyPartCode()) ? SMALL_ZONE_EXTRA_REPS : 0);
+        int maximo = limites == null || limites.maxReps() == null ? Integer.MAX_VALUE : limites.maxReps();
+        short reps = limites == null ? (short) base
+                : (short) Math.min(maximo,
+                Math.max(base, limites.minRepsFor(candidate.bodyPartCode(), level)));
         // Principio 5: principiante, 2 series.
         short sets = "BEGINNER".equals(level) ? (short) Math.min(prescription.sets(), 2) : prescription.sets();
 

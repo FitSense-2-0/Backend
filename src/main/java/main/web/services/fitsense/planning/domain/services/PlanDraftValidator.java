@@ -401,7 +401,8 @@ public class PlanDraftValidator {
      * bloqueando la generacion.
      * <p>
      * Lo que impide un plan ridiculamente corto sigue siendo la validacion 5
-     * (minimo 2 ejercicios), la 9 (minimo 2 series y 6 repeticiones) y, cuando
+     * (minimo 2 ejercicios), la 9 (minimo 2 series y 6 repeticiones, piso de
+     * seguridad del backend; a la IA se le da el min_reps de cada ejercicio) y, cuando
      * hay ajuste, la 8 (el volumen objetivo).
      * <p>
      * Se salta entera si la configuracion activa no trae el bloque prescription.
@@ -431,10 +432,12 @@ public class PlanDraftValidator {
                         // puso los 12 ejercicios de la semana a 3x10, gemelos incluidos.
                         int minimo = limites.minRepsFor(zona, context.profile().fitnessLevel());
                         if (reps < minimo || reps > limites.maxReps())
+                            // Mensaje en forma de instruccion (plan 29): el reintento
+                            // lo lee junto a su propuesta y tiene que saber que poner.
                             problems.add(("V16: el ejercicio %d (%s) lleva %d repeticiones y el limite "
-                                    + "es de %d a %d.")
+                                    + "es de %d a %d. Ponle entre %d y %d (su min_reps es %d).")
                                     .formatted(exercise.exerciseId(), zona, reps,
-                                            minimo, limites.maxReps()));
+                                            minimo, limites.maxReps(), minimo, limites.maxReps(), minimo));
                     });
         }
 
@@ -467,7 +470,8 @@ public class PlanDraftValidator {
             double desvio = Math.abs(workout.expectedDurationMinutes() - estimada) * 100.0 / estimada;
             if (desvio > tolerancia)
                 problems.add(("V17: el entrenamiento del %s declara %d minutos pero su contenido "
-                        + "dura unos %d (desvio de %.0f %%, maximo %d %%).")
+                        + "dura unos %d (desvio de %.0f %%, maximo %d %%). Declara lo que dure el "
+                        + "contenido final, despues de corregir lo demas.")
                         .formatted(workout.scheduledDate(), workout.expectedDurationMinutes(),
                                 estimada, desvio, tolerancia));
         }
@@ -680,9 +684,11 @@ public class PlanDraftValidator {
             int estimada = durationEstimator.estimateMinutes(workout, prescription);
             if (estimada < floor)
                 problems.add(("V20: el entrenamiento del %s dura unos %d minutos y el minimo es %d "
-                        + "(%d %% de %d). Agrega ejercicios o series, no descanso.")
+                        + "(%d %% de %d): le faltan unos %d minutos. Agrega un ejercicio del enfoque "
+                        + "o una serie a los que ya tiene, no descanso.")
                         .formatted(workout.scheduledDate(), estimada, floor,
-                                prescription.floorPct(), context.effectiveSessionMinutes()));
+                                prescription.floorPct(), context.effectiveSessionMinutes(),
+                                floor - estimada));
         }
     }
 

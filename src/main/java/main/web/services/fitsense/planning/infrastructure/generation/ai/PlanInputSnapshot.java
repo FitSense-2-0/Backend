@@ -25,6 +25,13 @@ public record PlanInputSnapshot(
          * plan sigue ligado al criterio que de verdad recibio la IA.
          */
         @JsonProperty("principles_version") String principlesVersion,
+        /**
+         * Version del texto de reglas del prompt (PlanPromptBuilder.VERSION).
+         * GEN-IN-1.6. Junto a principles_version y el modelo, fija con que
+         * instrucciones se genero cada plan: es lo que se congela antes del
+         * primer participante.
+         */
+        @JsonProperty("prompt_version") String promptVersion,
         User user,
         Constraints constraints,
         Adjustment adjustment,
@@ -60,7 +67,14 @@ public record PlanInputSnapshot(
             @JsonProperty("session_minutes") int sessionMinutes,
             @JsonProperty("training_location") String trainingLocation,
             @JsonProperty("max_difficulty_level") int maxDifficultyLevel,
-            @JsonProperty("rep_limits") RepLimits repLimits,
+            /**
+             * GEN-IN-1.6: solo el maximo. El minimo viaja ya calculado en cada
+             * ejercicio (available_exercises[].min_reps). Antes la IA tenia que
+             * cruzar body_part con min_reps_by_body_part y con
+             * min_reps_for_level y quedarse con el mayor; en el plan 29 tomo el 8
+             * del nivel para gemelos y abdomen y fallo V16 en los dos intentos.
+             */
+            @JsonProperty("max_reps") Integer maxReps,
             /** V20: minutos minimos por sesion. null cuando hay orden de volumen. */
             @JsonProperty("min_session_minutes") Integer minSessionMinutes,
             /** V21: descanso maximo entre series. */
@@ -75,9 +89,7 @@ public record PlanInputSnapshot(
              * Solo con REDUCE_VOLUME: tope de series y repeticiones de cada
              * ejercicio que ya estaba la semana anterior (V19). null si no aplica.
              */
-            @JsonProperty("reduce_volume_caps") List<ReduceVolumeCap> reduceVolumeCaps,
-            /** Minimo de repeticiones por nivel: 8 para BEGINNER, null para el resto. */
-            @JsonProperty("min_reps_for_level") Integer minRepsForLevel) {}
+            @JsonProperty("reduce_volume_caps") List<ReduceVolumeCap> reduceVolumeCaps) {}
 
     public record ReduceVolumeCap(
             @JsonProperty("exercise_id") long exerciseId,
@@ -89,18 +101,6 @@ public record PlanInputSnapshot(
     public record SuggestedSession(
             @JsonProperty("scheduled_date") LocalDate scheduledDate,
             @JsonProperty("focus_code") String focusCode) {}
-
-    /**
-     * Limite amplio que verifica V16 (MVP-1.5). Reemplaza al rango por objetivo
-     * (rep_range): NO es un objetivo ni una sugerencia, solo el borde de lo
-     * absurdo. Dentro de el las repeticiones las decide la IA con los
-     * principios.
-     */
-    public record RepLimits(
-            @JsonProperty("min_reps") Integer minReps,
-            @JsonProperty("max_reps") Integer maxReps,
-            /** Minimo provisional por body_part (gemelos 12, abdomen 10). */
-            @JsonProperty("min_reps_by_body_part") Map<String, Integer> minRepsByBodyPart) {}
 
     public record Adjustment(
             List<String> types,
@@ -169,7 +169,13 @@ public record PlanInputSnapshot(
              */
             @JsonProperty("prescription_type") String prescriptionType,
             /** biceps, triceps, pectorals...: separa lo que body_part mezcla (V22). */
-            @JsonProperty("target_muscle") String targetMuscle) {}
+            @JsonProperty("target_muscle") String targetMuscle,
+            /**
+             * GEN-IN-1.6: minimo de repeticiones de ESTE ejercicio, el mismo
+             * numero que verifica V16 (RepLimits.minRepsFor con zona y nivel).
+             * null en los de duracion o sin limites en la configuracion.
+             */
+            @JsonProperty("min_reps") Integer minReps) {}
 
     public static PlanInputSnapshot of(PlanGenerationContext context) {
         var profile = context.profile();
@@ -185,18 +191,13 @@ public record PlanInputSnapshot(
                 context.weekEndDate(), context.effectiveDaysPerWeek(), profile.availableDays(),
                 context.effectiveSessionMinutes(), profile.trainingLocation(),
                 context.effectiveMaxDifficulty(),
-                limites == null || !limites.isComplete() ? null
-                        : new RepLimits(limites.minReps(), limites.maxReps(),
-                        limites.minRepsByBodyPart() == null ? Map.of() : limites.minRepsByBodyPart()),
+                limites == null || !limites.isComplete() ? null : limites.maxReps(),
                 minSessionMinutesOrNull(context),
                 context.prescription() == null ? null : context.prescription().maxRestSecondsOrDefault(),
                 context.suggestedSplit().stream()
                         .map(session -> new SuggestedSession(session.date(), session.focus().name()))
                         .toList(),
-                reduceVolumeCapsOrNull(context),
-                "BEGINNER".equals(profile.fitnessLevel())
-                        ? main.web.services.fitsense.configuration.domain.model.valueobjects
-                        .PrescriptionParams.RepLimits.MIN_REPS_BEGINNER : null);
+                reduceVolumeCapsOrNull(context));
 
         var adjustment = context.adjustment() == null ? null : new Adjustment(
                 context.adjustment().types().stream().map(Enum::name).toList(),
@@ -252,7 +253,8 @@ public record PlanInputSnapshot(
                         candidate.bodyPartCode(), candidate.equipmentCode(), candidate.difficulty(),
                         candidate.defaultPrescription() == null ? null
                                 : candidate.defaultPrescription().name(),
-                        candidate.targetMuscle())));
+                        candidate.targetMuscle(),
+                        minRepsOrNull(candidate, limites, profile.fitnessLevel()))));
 
         var random = new java.util.Random(
                 context.userId() * 1_000_003L + context.weekStartDate().toEpochDay());
@@ -269,9 +271,21 @@ public record PlanInputSnapshot(
         // para que el modelo modere la prescripcion de los que SI quedan: una
         // sentadilla sigue siendo elegible y puede pautarse mas o menos profunda.
         return new PlanInputSnapshot(PlanGenerationContext.SCHEMA_VERSION,
-                PrescriptionPrinciples.VERSION,
+                PrescriptionPrinciples.VERSION, PlanPromptBuilder.VERSION,
                 user, constraints, adjustment, previousWeek, exercises,
                 context.safety() == null ? null : context.safety().describe());
+    }
+
+    /** Mismo calculo que V16: sin limites completos en la configuracion, V16 no valida. */
+    private static Integer minRepsOrNull(
+            main.web.services.fitsense.planning.domain.model.valueobjects.CandidateExercise candidate,
+            main.web.services.fitsense.configuration.domain.model.valueobjects.PrescriptionParams.RepLimits limites,
+            String fitnessLevel) {
+        if (limites == null || !limites.isComplete()) return null;
+        if (candidate.defaultPrescription()
+                == main.web.services.fitsense.planning.domain.model.valueobjects.PrescriptionType.DURATION)
+            return null;
+        return limites.minRepsFor(candidate.bodyPartCode(), fitnessLevel);
     }
 
     private static Integer minSessionMinutesOrNull(PlanGenerationContext context) {

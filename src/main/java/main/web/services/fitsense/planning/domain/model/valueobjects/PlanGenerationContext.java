@@ -44,9 +44,13 @@ public record PlanGenerationContext(
      * <p>
      * GEN-IN-1.5: reduce_volume_caps y min_reps_for_level en constraints.
      * <p>
+     * GEN-IN-1.6: min_reps calculado en cada available_exercise (zona y nivel,
+     * lo mismo que verifica V16); constraints.rep_limits pasa a max_reps y se
+     * retira min_reps_for_level; se suma prompt_version.
+     * <p>
      * Los snapshots antiguos siguen siendo legibles con su version.
      */
-    public static final String SCHEMA_VERSION = "GEN-IN-1.5";
+    public static final String SCHEMA_VERSION = "GEN-IN-1.6";
 
     /**
      * Dificultad maxima efectiva: la del perfil, salvo que el ajuste ordene

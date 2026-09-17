@@ -7,6 +7,7 @@ import main.web.services.fitsense.planning.domain.model.valueobjects.PlanDraft;
 import main.web.services.fitsense.planning.domain.model.valueobjects.PlanGenerationContext;
 import main.web.services.fitsense.planning.domain.services.PlanDraftValidator;
 import main.web.services.fitsense.planning.domain.services.TrainingPlanGenerator;
+import main.web.services.fitsense.planning.infrastructure.generation.ai.AiRetryFeedback;
 import main.web.services.fitsense.planning.infrastructure.generation.ai.ReplicateTrainingPlanGenerator;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -64,13 +65,30 @@ public class PlanGenerationPipeline {
 
     public Result run(PlanGenerationContext context, int durationToRepsDivisor) {
         short attempts = 0;
+        // Todos los motivos de rechazo, en orden y sin repetir: los recibe el
+        // motor de reglas y, en el reintento, la parte que no es del ultimo.
+        var acumulados = new java.util.LinkedHashSet<String>();
+        String ultimaPropuesta = null;
+        List<String> ultimosMotivos = List.of();
         List<String> problems = List.of();
 
         if (aiGenerator.isEnabled() && proveedorDisponible()) {
             for (int attempt = 1; attempt <= AI_ATTEMPTS; attempt++) {
                 attempts++;
+                String output = null;
                 try {
-                    var draft = aiGenerator.generate(context, problems);
+                    // Se ACUMULAN los problemas de todos los intentos. En la prueba
+                    // el segundo intento solo recibio el error del primero,
+                    // corrigio ese y cometio otro del mismo tipo. Ademas, desde el
+                    // plan 29 el reintento recibe su propuesta rechazada: sin ella
+                    // generaba un plan nuevo y no corregia el anterior.
+                    var anteriores = new java.util.ArrayList<>(acumulados);
+                    anteriores.removeAll(ultimosMotivos);
+                    var feedback = attempt == 1 ? AiRetryFeedback.none()
+                            : new AiRetryFeedback(ultimaPropuesta, ultimosMotivos, anteriores);
+
+                    output = aiGenerator.requestOutput(context, feedback);
+                    var draft = aiGenerator.toDraft(output);
                     validator.validate(draft, context, durationToRepsDivisor);
                     fallosSeguidos.set(0);
                     return new Result(draft, attempts);
@@ -79,24 +97,22 @@ public class PlanGenerationPipeline {
                     // El proveedor esta caido: no tiene sentido gastar el segundo
                     // intento, va a fallar igual.
                     registrarFalloDeProveedor();
-                    problems = e.problems();
+                    acumulados.addAll(e.problems());
                     break;
 
                 } catch (InvalidPlanDraftException e) {
                     // El modelo respondio pero incumplio validaciones. Eso NO
                     // cuenta para el cortocircuito: es su capacidad, no una caida.
                     fallosSeguidos.set(0);
-                    // Se ACUMULAN los problemas de todos los intentos. En la prueba
-                    // el segundo intento solo recibio el error del primero,
-                    // corrigio ese y cometio otro del mismo tipo.
-                    var acumulados = new java.util.LinkedHashSet<>(problems);
+                    ultimaPropuesta = output;
+                    ultimosMotivos = List.copyOf(e.problems());
                     acumulados.addAll(e.problems());
-                    problems = List.copyOf(acumulados);
                     log.warn("Intento {} de IA rechazado para el usuario {}: {}",
                             attempt, context.userId(), e.problems());
                 }
             }
         }
+        problems = List.copyOf(acumulados);
 
         // Respaldo determinista. Se cuenta como intento propio para que
         // generation_attempts refleje el coste real de producir la semana.
