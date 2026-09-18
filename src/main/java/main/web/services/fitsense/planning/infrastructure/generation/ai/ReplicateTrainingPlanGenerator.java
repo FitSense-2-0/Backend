@@ -70,7 +70,7 @@ public class ReplicateTrainingPlanGenerator implements TrainingPlanGenerator {
         var snapshot = PlanInputSnapshot.of(context);
         var snapshotJson = jsonSupport.write(snapshot);
         var prompt = promptBuilder.build(context, snapshotJson, feedback);
-        return call(prompt);
+        return call(prompt, context.effectiveDaysPerWeek());
     }
 
     /** Convierte la salida del modelo en borrador. Lanza InvalidPlanDraftException si no se puede. */
@@ -78,12 +78,12 @@ public class ReplicateTrainingPlanGenerator implements TrainingPlanGenerator {
         return assembler.toDraft(output, properties.model());
     }
 
-    private String call(String prompt) {
+    private String call(String prompt, int workoutCount) {
         var input = new LinkedHashMap<String, Object>();
         input.put("model", properties.model());
         input.put("prompt", prompt);
         input.put("reasoning_effort", properties.reasoningEffort());
-        input.put("json_schema", PlanJsonSchema.format());
+        input.put("json_schema", PlanJsonSchema.format(workoutCount));
 
         String rawBody = post(input);
 

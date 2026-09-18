@@ -2,6 +2,7 @@ package main.web.services.fitsense.planning.infrastructure.generation.ai;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
 import main.web.services.fitsense.planning.domain.model.valueobjects.PlanGenerationContext;
+import main.web.services.fitsense.planning.domain.model.valueobjects.TargetPrescription;
 import main.web.services.fitsense.planning.domain.services.PlanDraftValidator;
 
 import java.math.BigDecimal;
@@ -73,10 +74,27 @@ public record PlanInputSnapshot(
              * cruzar body_part con min_reps_by_body_part y con
              * min_reps_for_level y quedarse con el mayor; en el plan 29 tomo el 8
              * del nivel para gemelos y abdomen y fallo V16 en los dos intentos.
+             * Con min_reps por ejercicio (plan 30) ese fallo desaparecio.
              */
             @JsonProperty("max_reps") Integer maxReps,
+            /**
+             * GEN-IN-1.7: prescripcion de partida del objetivo (TargetPrescription),
+             * la misma que usa el motor de reglas. NO es un tope: es la referencia
+             * de la que apartarse por ejercicio. Sin esto, en el plan 30 la IA tomo
+             * min_reps como valor por defecto y puso 3x8 a los 21 ejercicios.
+             */
+            @JsonProperty("target_reps") Integer targetReps,
+            @JsonProperty("target_sets") Integer targetSets,
             /** V20: minutos minimos por sesion. null cuando hay orden de volumen. */
             @JsonProperty("min_session_minutes") Integer minSessionMinutes,
+            /**
+             * GEN-IN-1.7: cuantos ejercicios necesita una sesion para llegar a
+             * min_session_minutes con target_sets x target_reps y el descanso de
+             * target. Calculado con la misma formula de V17 y V20. La IA no estima
+             * bien la duracion: en el plan 30 declaro 21 minutos donde el minimo era
+             * 31. null cuando no hay minimo de minutos.
+             */
+            @JsonProperty("min_exercises_per_session") Integer minExercisesPerSession,
             /** V21: descanso maximo entre series. */
             @JsonProperty("max_rest_seconds") Integer maxRestSeconds,
             /**
@@ -100,7 +118,21 @@ public record PlanInputSnapshot(
 
     public record SuggestedSession(
             @JsonProperty("scheduled_date") LocalDate scheduledDate,
-            @JsonProperty("focus_code") String focusCode) {}
+            @JsonProperty("focus_code") String focusCode,
+            /**
+             * GEN-IN-1.8: los body_part que admite ese enfoque, ya resueltos. La
+             * IA no tiene que consultar la tabla del prompt.
+             */
+            @JsonProperty("body_parts") List<String> bodyParts,
+            /** Cuantos body_part distintos debe cubrir la sesion como minimo (V15). */
+            @JsonProperty("min_body_parts") Integer minBodyParts,
+            /**
+             * GEN-IN-1.8: tope de ejercicios por body_part en esa sesion, la mitad
+             * de min_exercises_per_session (V15). null cuando la regla de la mitad
+             * no aplica. Sin este numero, en los planes 31 y 32 el dia inferior
+             * salio con 9 de 9 ejercicios en upper legs.
+             */
+            @JsonProperty("max_per_body_part") Integer maxPerBodyPart) {}
 
     public record Adjustment(
             List<String> types,
@@ -186,16 +218,20 @@ public record PlanInputSnapshot(
                 profile.equipmentCodes() == null ? List.of() : List.copyOf(profile.equipmentCodes()));
 
         var limites = context.prescription() == null ? null : context.prescription().repLimits();
+        var objetivo = TargetPrescription.forGoal(profile.goalType());
+        var minExercises = minExercisesOrNull(context, objetivo);
 
         var constraints = new Constraints(context.weekNumber(), context.weekStartDate(),
                 context.weekEndDate(), context.effectiveDaysPerWeek(), profile.availableDays(),
                 context.effectiveSessionMinutes(), profile.trainingLocation(),
                 context.effectiveMaxDifficulty(),
                 limites == null || !limites.isComplete() ? null : limites.maxReps(),
+                (int) objetivo.reps(), (int) objetivo.setsFor(profile.fitnessLevel()),
                 minSessionMinutesOrNull(context),
+                minExercises,
                 context.prescription() == null ? null : context.prescription().maxRestSecondsOrDefault(),
                 context.suggestedSplit().stream()
-                        .map(session -> new SuggestedSession(session.date(), session.focus().name()))
+                        .map(session -> suggestedSession(session, minExercises))
                         .toList(),
                 reduceVolumeCapsOrNull(context));
 
@@ -274,6 +310,49 @@ public record PlanInputSnapshot(
                 PrescriptionPrinciples.VERSION, PlanPromptBuilder.VERSION,
                 user, constraints, adjustment, previousWeek, exercises,
                 context.safety() == null ? null : context.safety().describe());
+    }
+
+    /**
+     * Cuotas por grupo de una sesion, con los mismos numeros que verifica V15:
+     * cubrir al menos 2 body_part (o menos, si el enfoque o la sesion no dan) y
+     * ninguno por encima de la mitad de los ejercicios. El tope se calcula sobre
+     * min_exercises_per_session; si la IA pone mas ejercicios, V15 admitira algo
+     * mas, nunca menos.
+     */
+    private static SuggestedSession suggestedSession(
+            main.web.services.fitsense.planning.domain.services.WeeklySplitPlanner.PlannedSession session,
+            Integer minExercises) {
+        var grupos = session.focus().bodyPartCodes();
+        Integer tope = (minExercises == null || grupos.size() < 3 || minExercises < 4)
+                ? null : minExercises / 2;
+        int minGrupos = minExercises == null
+                ? Math.min(2, grupos.size())
+                : Math.min(2, Math.min(grupos.size(), minExercises));
+        return new SuggestedSession(session.date(), session.focus().name(),
+                List.copyOf(grupos), minGrupos, tope);
+    }
+
+    /**
+     * Ejercicios necesarios para llegar al minimo de minutos con la prescripcion
+     * de partida, despejando la formula del SessionDurationEstimator:
+     * calentamiento + n x (trabajo + descanso) + (n - 1) x transicion >= minimo.
+     * Es una referencia: si la IA usa mas series o mas repeticiones, necesitara
+     * menos ejercicios.
+     */
+    private static Integer minExercisesOrNull(PlanGenerationContext context,
+                                              TargetPrescription objetivo) {
+        var minMinutos = minSessionMinutesOrNull(context);
+        var params = context.prescription();
+        if (minMinutos == null || params == null) return null;
+
+        int series = objetivo.setsFor(context.profile().fitnessLevel());
+        int porEjercicio = series * objetivo.reps() * params.secondsPerRepOrDefault()
+                + Math.max(0, series - 1) * objetivo.restSeconds();
+        int transicion = params.transitionSecondsOrDefault();
+        if (porEjercicio + transicion <= 0) return null;
+
+        int restante = minMinutos * 60 - params.warmupMinutesOrDefault() * 60 + transicion;
+        return Math.max(2, (int) Math.ceil(restante / (double) (porEjercicio + transicion)));
     }
 
     /** Mismo calculo que V16: sin limites completos en la configuracion, V16 no valida. */

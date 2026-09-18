@@ -37,8 +37,23 @@ public record SafetyProfile(
     public static final int EDAD_SIN_CARGA_AXIAL = 65;
 
     public static SafetyProfile forAge(int age) {
+        return forAgeAndLevel(age, null);
+    }
+
+    /**
+     * Restricciones por edad y, desde el plan 30, tambien por nivel: un
+     * principiante no recibe saltos ni pliometria (high_impact), entrene donde
+     * entrene. El plan 30 abrio la semana de una principiante con "Salto
+     * profundo desde flexion inclinada", que el catalogo marca como alto impacto
+     * y hasta ahora solo se filtraba a partir de los 60 anos.
+     * <p>
+     * Criterio de diseno, no dato del catalogo: ACSM 2009 recomienda introducir
+     * pliometria cuando ya existe una base de fuerza. El suelo y la carga axial
+     * siguen dependiendo solo de la edad.
+     */
+    public static SafetyProfile forAgeAndLevel(int age, String fitnessLevel) {
         return new SafetyProfile(
-                age >= EDAD_SIN_IMPACTO,
+                age >= EDAD_SIN_IMPACTO || "BEGINNER".equals(fitnessLevel),
                 age >= EDAD_SIN_SUELO,
                 age >= EDAD_SIN_CARGA_AXIAL);
     }
@@ -59,7 +74,7 @@ public record SafetyProfile(
      */
     public String describe() {
         if (!hasRestrictions()) return null;
-        var partes = new StringBuilder("El participante tiene restricciones de seguridad por edad. ");
+        var partes = new StringBuilder("El participante tiene restricciones de seguridad. ");
         if (excludeHighImpact)
             partes.append("Evita cualquier movimiento explosivo o de impacto, aunque el ejercicio lo permita. ");
         if (excludeAxialLoad)

@@ -26,7 +26,11 @@ public record ReplicateProperties(
             baseUrl = "https://api.replicate.com/v1/models/openai/gpt-5-structured/predictions";
         if (model == null || model.isBlank()) model = "gpt-5-nano";
         if (reasoningEffort == null || reasoningEffort.isBlank()) reasoningEffort = "medium";
-        if (timeoutSeconds <= 0) timeoutSeconds = 90;
+        // 150 s desde el plan 33: una prediccion tardo mas de 90 s, el proveedor
+        // quedo marcado como no disponible y la semana la hizo el motor de
+        // reglas sin gastar el segundo intento. El intento valido del plan 31
+        // habia tardado unos 100 s.
+        if (timeoutSeconds <= 0) timeoutSeconds = 150;
     }
 
     /**

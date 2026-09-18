@@ -3,6 +3,7 @@ package main.web.services.fitsense.planning.application.internal.commandservices
 import main.web.services.fitsense.planning.domain.exceptions.AiProviderUnavailableException;
 import main.web.services.fitsense.planning.domain.exceptions.InvalidPlanDraftException;
 import main.web.services.fitsense.planning.domain.exceptions.PlanGenerationFailedException;
+import main.web.services.fitsense.planning.domain.services.PlanDraftNormalizer;
 import main.web.services.fitsense.planning.domain.model.valueobjects.PlanDraft;
 import main.web.services.fitsense.planning.domain.model.valueobjects.PlanGenerationContext;
 import main.web.services.fitsense.planning.domain.services.PlanDraftValidator;
@@ -22,8 +23,10 @@ import java.util.concurrent.atomic.AtomicInteger;
 /**
  * La politica de fallo de 19.4, literal:
  * <pre>
- *   Intento 1 falla -> se reenvia con la lista de validaciones incumplidas.
- *   Intento 2 falla -> generador de reglas.
+ *   Intento 1 falla -> se reenvia con su propuesta y los motivos de rechazo.
+ *   Intentos 2 y 3   -> igual; 3 desde el plan 36, donde el segundo intento
+ *                       quedo a un solo campo de ser valido.
+ *   Los 3 fallan    -> generador de reglas.
  *   Regla falla     -> no se activa la semana.
  * </pre>
  * El respaldo por reglas no es opcional: sin el, una caida del proveedor deja
@@ -36,7 +39,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class PlanGenerationPipeline {
 
     private static final Logger log = LoggerFactory.getLogger(PlanGenerationPipeline.class);
-    private static final int AI_ATTEMPTS = 2;
+    private static final int AI_ATTEMPTS = 3;
 
     /** Fallos seguidos del proveedor antes de dejar de intentarlo. */
     private static final int UMBRAL_CORTOCIRCUITO = 3;
@@ -47,6 +50,7 @@ public class PlanGenerationPipeline {
     private final ReplicateTrainingPlanGenerator aiGenerator;
     private final TrainingPlanGenerator ruleGenerator;
     private final PlanDraftValidator validator;
+    private final PlanDraftNormalizer normalizer;
 
     private final AtomicInteger fallosSeguidos = new AtomicInteger();
     private volatile Instant reabrirDespuesDe = Instant.EPOCH;
@@ -54,10 +58,12 @@ public class PlanGenerationPipeline {
     public PlanGenerationPipeline(ReplicateTrainingPlanGenerator aiGenerator,
                                   @Qualifier("ruleBasedTrainingPlanGenerator")
                                   TrainingPlanGenerator ruleGenerator,
-                                  PlanDraftValidator validator) {
+                                  PlanDraftValidator validator,
+                                  PlanDraftNormalizer normalizer) {
         this.aiGenerator = aiGenerator;
         this.ruleGenerator = ruleGenerator;
         this.validator = validator;
+        this.normalizer = normalizer;
     }
 
     /** @param attempts numero de intentos consumidos, para generation_attempts. */
@@ -88,7 +94,10 @@ public class PlanGenerationPipeline {
                             : new AiRetryFeedback(ultimaPropuesta, ultimosMotivos, anteriores);
 
                     output = aiGenerator.requestOutput(context, feedback);
-                    var draft = aiGenerator.toDraft(output);
+                    // El tipo de prescripcion se corrige antes de validar: es un
+                    // dato del catalogo, no una decision del modelo. Todo lo
+                    // demas se valida tal cual lo propuso.
+                    var draft = normalizer.normalize(aiGenerator.toDraft(output), context).draft();
                     validator.validate(draft, context, durationToRepsDivisor);
                     fallosSeguidos.set(0);
                     return new Result(draft, attempts);

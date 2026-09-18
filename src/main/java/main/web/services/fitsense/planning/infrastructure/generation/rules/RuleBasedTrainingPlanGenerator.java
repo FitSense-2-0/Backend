@@ -66,9 +66,14 @@ public class RuleBasedTrainingPlanGenerator implements TrainingPlanGenerator {
 
 
     /** 20.4: los de duracion van 3 series de 40 segundos con 45 de descanso. */
-    private static final short DURATION_SETS = 3;
-    private static final int DURATION_SECONDS = 40;
-    private static final short DURATION_REST_SECONDS = 45;
+    // Definidos en PlanDraftNormalizer: un ejercicio de duracion se ve igual
+    // venga del motor de reglas o de una propuesta de IA ya normalizada.
+    private static final short DURATION_SETS =
+            main.web.services.fitsense.planning.domain.services.PlanDraftNormalizer.DURATION_SETS;
+    private static final int DURATION_SECONDS =
+            main.web.services.fitsense.planning.domain.services.PlanDraftNormalizer.DURATION_SECONDS;
+    private static final short DURATION_REST_SECONDS =
+            main.web.services.fitsense.planning.domain.services.PlanDraftNormalizer.DURATION_REST_SECONDS;
 
     private final int durationToRepsDivisor;
     private final SessionDurationEstimator durationEstimator;
@@ -105,7 +110,7 @@ public class RuleBasedTrainingPlanGenerator implements TrainingPlanGenerator {
         var selector = new ExerciseSelector(context.availableExercises(),
                 context.effectiveMaxDifficulty(), recentlyUsed, random);
 
-        var prescription = Prescription.forGoal(profile.goalType());
+        var prescription = TargetPrescription.forGoal(profile.goalType());
 
         // El plan BASE se arma siempre igual, con o sin ajuste: el reductor solo
         // sabe bajar volumen, asi que si la semana 1 se completo hasta el minimo
@@ -185,7 +190,7 @@ public class RuleBasedTrainingPlanGenerator implements TrainingPlanGenerator {
     private void addUntilMinimum(ExerciseSelector selector, WorkoutFocus focus,
                                  List<CandidateExercise> picked,
                                  List<PlanDraft.DraftExercise> exercises,
-                                 Prescription prescription, PlanGenerationContext context,
+                                 TargetPrescription prescription, PlanGenerationContext context,
                                  java.util.function.BooleanSupplier falta, boolean respetarTopes) {
         while (exercises.size() < MAX_EXERCISES_PER_SESSION && falta.getAsBoolean()) {
             var extra = selector.pickAdditional(focus, picked, respetarTopes);
@@ -246,7 +251,7 @@ public class RuleBasedTrainingPlanGenerator implements TrainingPlanGenerator {
     // ------------------------------------------------------------------- 20.4
 
     private PlanDraft.DraftExercise toDraftExercise(CandidateExercise candidate,
-                                                    Prescription prescription,
+                                                    TargetPrescription prescription,
                                                     PlanGenerationContext context) {
         if (candidate.defaultPrescription() == PrescriptionType.DURATION) {
             return new PlanDraft.DraftExercise(candidate.exerciseId(), PrescriptionType.DURATION,
@@ -276,7 +281,7 @@ public class RuleBasedTrainingPlanGenerator implements TrainingPlanGenerator {
                 : (short) Math.min(maximo,
                 Math.max(base, limites.minRepsFor(candidate.bodyPartCode(), level)));
         // Principio 5: principiante, 2 series.
-        short sets = "BEGINNER".equals(level) ? (short) Math.min(prescription.sets(), 2) : prescription.sets();
+        short sets = prescription.setsFor(level);
 
         return new PlanDraft.DraftExercise(candidate.exerciseId(), PrescriptionType.SETS_REPS,
                 sets, reps, null, suggestedLoad,

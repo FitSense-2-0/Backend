@@ -90,10 +90,10 @@ public class WeeklyTrainingPlanCommandServiceImpl implements WeeklyTrainingPlanC
                 ? Math.max(1, adjustment.maxDifficultyLevel())
                 : profile.maxDifficultyLevel();
 
-        // Restricciones por edad. Se aplican EN LA CONSULTA: la IA no llega a
-        // ver los ejercicios que no le corresponden al participante, asi que no
-        // puede proponerlos aunque ignore las instrucciones del prompt.
-        var safety = SafetyProfile.forAge(profile.age());
+        // Restricciones por edad y nivel. Se aplican EN LA CONSULTA: la IA no
+        // llega a ver los ejercicios que no le corresponden al participante, asi
+        // que no puede proponerlos aunque ignore las instrucciones del prompt.
+        var safety = SafetyProfile.forAgeAndLevel(profile.age(), profile.fitnessLevel());
 
         var eligible = externalCatalogService.fetchEligibleFor(profile, maxDifficulty, safety);
         if (eligible.isEmpty())

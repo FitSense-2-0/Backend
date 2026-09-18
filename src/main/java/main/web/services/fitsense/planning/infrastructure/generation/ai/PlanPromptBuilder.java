@@ -17,6 +17,19 @@ public class PlanPromptBuilder {
     /**
      * Version del texto de reglas. Viaja en input_snapshot.prompt_version.
      * <p>
+     * PR-1.2 (GEN-IN-1.8): la regla 15 remite a las cuotas por grupo que ahora
+     * trae suggested_split (en los planes 31 y 32 el dia inferior salio con casi
+     * todos los ejercicios en upper legs) y la 2 prohibe repetir entrenamientos
+     * (el plan 32 devolvio 5 sesiones repitiendo dos).
+     * <p>
+     * PR-1.1 (GEN-IN-1.7): tras el plan 30. La regla 16 manda partir de
+     * target_reps y target_sets, porque la IA tomo min_reps como valor por
+     * defecto y puso 3x8 a los 21 ejercicios. La 17 remite a
+     * min_exercises_per_session, que el backend calcula. El reintento prohibe
+     * corregir quitando ejercicios y recuerda que todas las reglas siguen
+     * valiendo: en el plan 30 arreglo V15 y V16 borrando la mitad de cada sesion
+     * y rompio V20 en las tres.
+     * <p>
      * PR-1.0 (GEN-IN-1.6): primera version con numero. Respecto al texto
      * anterior: las reglas 9, 16 y 21 se unen en una sobre min_reps por
      * ejercicio (la 9 decia todavia "minimo 6 repeticiones" y contradecia a la
@@ -25,7 +38,7 @@ public class PlanPromptBuilder {
      * <p>
      * Cambiar cualquier texto de este archivo exige subir la version.
      */
-    public static final String VERSION = "PR-1.0";
+    public static final String VERSION = "PR-1.2";
 
     private final JsonSupport jsonSupport;
 
@@ -43,7 +56,9 @@ public class PlanPromptBuilder {
 
                 Reglas que el backend verifica y que invalidan tu propuesta si no se cumplen:
                 1.  Usa solo exercise_id presentes en available_exercises. No inventes ninguno.
-                2.  Genera exactamente tantos entrenamientos como days_per_week.
+                2.  Genera exactamente tantos entrenamientos como days_per_week,
+                    uno por cada fecha de constraints.suggested_split. Ni uno mas:
+                    no repitas un entrenamiento ya escrito.
                 3.  Programa solo en fechas cuyo dia de la semana este en available_days,
                     dentro del rango week_start_date a week_end_date, formato AAAA-MM-DD.
                 4.  expected_duration_minutes no puede superar session_minutes mas 15 %.
@@ -72,17 +87,23 @@ public class PlanPromptBuilder {
                     movimiento comodo y sin dolor, menos series, mas descanso.
                 15. Cada entrenamiento debe CUBRIR su enfoque, no repetir zona.
                     Un FULL_BODY con seis ejercicios de biceps no es cuerpo
-                    completo. Cubre al menos 2 body_part distintos de los que el
-                    enfoque admite (3 si la sesion lo permite), y que ningun
-                    grupo se lleve mas de la mitad de la sesion.
+                    completo. Cada sesion de constraints.suggested_split trae sus
+                    cuotas ya calculadas: usa body_parts (los grupos que admite),
+                    cubre al menos min_body_parts de ellos y no pongas mas de
+                    max_per_body_part ejercicios del mismo body_part. Reparte
+                    entre los grupos hasta completar los ejercicios de la sesion:
+                    si un grupo llega a su tope, sigue por otro.
                 16. Las repeticiones las decides tu, ejercicio por ejercicio,
                     con los PRINCIPIOS DE PRESCRIPCION de mas abajo. Cada ejercicio
                     de available_exercises trae su min_reps: planned_reps nunca
                     baja de ese numero ni supera constraints.max_reps. min_reps ya
                     tiene en cuenta la zona y el nivel de la persona: usalo tal
                     cual, no lo recalcules. Ese limite NO es un objetivo: es solo
-                    el borde de lo absurdo. No pongas la misma prescripcion a todos
-                    los ejercicios.
+                    el borde de lo absurdo, y NO es el valor por defecto.
+                    Parte de constraints.target_reps y target_sets, la prescripcion
+                    del objetivo de esta persona, y apartate de ahi ejercicio por
+                    ejercicio segun los principios. No pongas la misma prescripcion
+                    a todos los ejercicios.
                 17. expected_duration_minutes debe ser lo que dura el contenido
                     que prescribes, no una copia de session_minutes. El backend
                     lo recalcula asi y rechaza un desvio mayor al 20 %:
@@ -97,6 +118,10 @@ public class PlanPromptBuilder {
                     debe durar al menos eso: la persona reservo ese tiempo. Llega
                     con ejercicios o series, no con descanso: rest_seconds nunca
                     supera constraints.max_rest_seconds.
+                    constraints.min_exercises_per_session dice cuantos ejercicios
+                    hacen falta para llegar a ese minimo con target_sets x
+                    target_reps. Usalo como referencia al armar cada sesion: con
+                    menos ejercicios, solo llegas subiendo series o repeticiones.
                 18. Recuperacion entre dias consecutivos: el mismo exercise_id
                     no se repite en dos dias seguidos, y chest, back, shoulders y
                     upper legs no se trabajan dos dias seguidos. Con dias
@@ -186,12 +211,18 @@ public class PlanPromptBuilder {
                 cambia solo lo necesario para resolver cada motivo y conserva lo que
                 ya estaba bien. Si un motivo nombra un exercise_id, corrige ese
                 ejercicio. Si una sesion no llega al minimo de minutos, anadele un
-                ejercicio o una serie en vez de rehacerla. Antes de responder,
-                comprueba cada motivo contra tu nueva propuesta.
+                ejercicio o una serie en vez de rehacerla.
+                NO quites ejercicios ni sesiones para corregir. Cada sesion conserva
+                al menos los ejercicios que ya tenia. Si sobran de un grupo muscular,
+                REEMPLAZALOS por otros del enfoque, nunca los elimines sin reponerlos.
+                La lista de motivos solo nombra lo que fallo esta vez: TODAS las
+                reglas siguen valiendo. Antes de responder, repasa tu nueva propuesta
+                contra las reglas 1 a 20 completas, no solo contra los motivos.
                 """ : """
 
-                Corrige cada motivo. Antes de responder, comprueba cada uno contra tu
-                nueva propuesta.
+                Corrige cada motivo. Todas las reglas siguen valiendo, no solo las que
+                aparecen en la lista. Antes de responder, repasa tu propuesta contra
+                las reglas 1 a 20 completas.
                 """);
     }
 }

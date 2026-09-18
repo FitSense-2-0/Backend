@@ -18,21 +18,33 @@ final class PlanJsonSchema {
 
     private PlanJsonSchema() {}
 
-    static Map<String, Object> format() {
+    /**
+     * @param workoutCount entrenamientos que debe traer el plan (days_per_week).
+     *                     Viaja como descripcion del array, NO como minItems y
+     *                     maxItems: el modo estricto de salida estructurada de
+     *                     OpenAI rechaza esas dos palabras clave y la peticion
+     *                     entera fallaria. La descripcion si se admite, y es lo
+     *                     unico que se puede poner donde el modelo genera. El
+     *                     numero exacto lo sigue verificando V2.
+     */
+    static Map<String, Object> format(int workoutCount) {
         return Map.of("format", Map.of(
                 "type", "json_schema",
                 "name", "weekly_training_plan",
-                "schema", schema()));
+                "schema", schema(workoutCount)));
     }
 
-    private static Map<String, Object> schema() {
+    private static Map<String, Object> schema(int workoutCount) {
         return object(
                 Map.of(
                         "schema_version", type("string"),
                         "plan_name", type("string"),
                         "total_volume", type("integer"),
                         "rationale", type("string"),
-                        "workouts", Map.of("type", "array", "items", workout())),
+                        "workouts", Map.of("type", "array", "items", workout(),
+                                "description", ("Exactamente %d entrenamientos, uno por cada fecha "
+                                        + "de constraints.suggested_split. No repitas un "
+                                        + "entrenamiento ya escrito.").formatted(workoutCount))),
                 List.of("schema_version", "plan_name", "total_volume", "rationale", "workouts"));
     }
 
@@ -44,7 +56,9 @@ final class PlanJsonSchema {
                                 "PUSH", "PULL", "LEGS", "CORE"),
                         "workout_name", type("string"),
                         "expected_duration_minutes", type("integer"),
-                        "exercises", Map.of("type", "array", "items", exercise())),
+                        "exercises", Map.of("type", "array", "items", exercise(),
+                                "description", "Los ejercicios de esa sesion, sin repetir "
+                                        + "exercise_id dentro de la misma sesion.")),
                 List.of("scheduled_date", "focus_code", "workout_name",
                         "expected_duration_minutes", "exercises"));
     }
